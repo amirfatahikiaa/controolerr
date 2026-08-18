@@ -118,7 +118,7 @@ object IInputManagerBinderHelper {
 
             Log.i(TAG, "Invoking injectInputEvent via wrapped binder...")
             Log.i(TAG, "Event class: ${event.javaClass.name}")
-            Log.i(TAG, "Event: flags=0x${Integer.toHexString(event.getFlags())} eventTime=${event.getEventTime()}")
+            Log.i(TAG, "Event: deviceId=${event.getDeviceId()} eventTime=${event.getEventTime()}")
 
             val invokeTs = System.nanoTime()
             val result = method.invoke(wrappedBinder, event, mode)
