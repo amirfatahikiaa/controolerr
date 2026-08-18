@@ -91,7 +91,7 @@ class GPMapperApp : Application() {
         try {
             Log.i(TAG, "requestShizukuPermission called, checking permission...")
             val checkResult = Shizuku.checkSelfPermission()
-            Log.i(TAG, "checkSelfPermission returned: $checkResult (GRANTED=$PackageManager.PERMISSION_GRANTED)")
+            Log.i(TAG, "checkSelfPermission returned: $checkResult (GRANTED=${PackageManager.PERMISSION_GRANTED})")
 
             if (checkResult != PackageManager.PERMISSION_GRANTED) {
                 Log.i(TAG, "Calling Shizuku.requestPermission(requestCode=$requestCode)")
