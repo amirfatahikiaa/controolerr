@@ -15,6 +15,9 @@
 #include <cstdint>
 #include <functional>
 #include <vector>
+#include <fcntl.h>
+#include <unistd.h>
+#include <errno.h>
 
 #define LOG_TAG "GPMapperNative"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
@@ -105,23 +108,4 @@ private:
     int32_t m_current_slot;
 
     std::mutex m_event_mutex;
-
-    static constexpr int32_t ABS_MT_SLOT = 0x2f;
-    static constexpr int32_t ABS_MT_TOUCH_MAJOR = 0x30;
-    static constexpr int32_t ABS_MT_TOUCH_MINOR = 0x31;
-    static constexpr int32_t ABS_MT_WIDTH_MAJOR = 0x32;
-    static constexpr int32_t ABS_MT_WIDTH_MINOR = 0x33;
-    static constexpr int32_t ABS_MT_ORIENTATION = 0x34;
-    static constexpr int32_t ABS_MT_POSITION_X = 0x35;
-    static constexpr int32_t ABS_MT_POSITION_Y = 0x36;
-    static constexpr int32_t ABS_MT_TOOL_TYPE = 0x37;
-    static constexpr int32_t ABS_MT_BLOB_ID = 0x38;
-    static constexpr int32_t ABS_MT_TRACKING_ID = 0x39;
-    static constexpr int32_t ABS_MT_PRESSURE = 0x3a;
-    static constexpr int32_t ABS_MT_DISTANCE = 0x3b;
-    static constexpr int32_t ABS_MT_TOOL_X = 0x3c;
-    static constexpr int32_t ABS_MT_TOOL_Y = 0x3d;
-    static constexpr int32_t BTN_TOUCH = 0x14a;
-    static constexpr int32_t BTN_TOOL_PEN = 0x140;
-    static constexpr int32_t BTN_TOOL_FINGER = 0x145;
 };
