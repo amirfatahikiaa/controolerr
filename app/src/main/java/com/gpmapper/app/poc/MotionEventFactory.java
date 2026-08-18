@@ -11,7 +11,7 @@ public class MotionEventFactory {
         try {
             for (Method m : MotionEvent.class.getDeclaredMethods()) {
                 if ("obtain".equals(m.getName())
-                        && java.lang.reflect.Modifier.isStatic(m.modifiers())) {
+                        && java.lang.reflect.Modifier.isStatic(m.getModifiers())) {
                     Class<?>[] params = m.getParameterTypes();
                     if (params.length == 14) {
                         sObtainMethod = m;
