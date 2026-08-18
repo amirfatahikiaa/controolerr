@@ -28,10 +28,6 @@ public class MotionEventFactory {
             );
             event.setSource(InputDevice.SOURCE_TOUCHSCREEN);
 
-            int flags = event.getFlags();
-            flags |= FLAG_INJECTED;
-            event.setFlags(flags);
-
             lastResult = "SUCCESS";
             Log.i(TAG, lastResult);
             return event;
@@ -55,7 +51,8 @@ public class MotionEventFactory {
         sb.append("deviceId=").append(event.getDeviceId()).append("\n");
         sb.append("source=0x").append(Integer.toHexString(event.getSource())).append("\n");
         sb.append("flags=0x").append(Integer.toHexString(event.getFlags())).append("\n");
-        sb.append("FLAG_INJECTED=").append((event.getFlags() & FLAG_INJECTED) != 0).append("\n");
+        sb.append("FLAG_INJECTED=").append((event.getFlags() & FLAG_INJECTED) != 0)
+          .append(" (cannot set via public SDK — hidden API setFlags())\n");
 
         for (int i = 0; i < event.getPointerCount(); i++) {
             sb.append("pointer[").append(i).append("] id=")
