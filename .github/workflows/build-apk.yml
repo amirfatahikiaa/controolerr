@@ -1,9 +1,77 @@
-name: Test
+"on":
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
 
-on: workflow_dispatch
+name: Build GP-Mapper APK
 
 jobs:
-  test:
+  build:
     runs-on: ubuntu-latest
+
     steps:
-      - run: echo "OK"
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          cache: 'gradle'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Cache NDK and CMake
+        id: cache-ndk
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ env.ANDROID_HOME }}/ndk/27.0.12077973
+            ${{ env.ANDROID_HOME }}/cmake/3.22.1
+          key: ndk-cmake-27-cmake-32-v3
+
+      - name: Install Android NDK and CMake
+        if: steps.cache-ndk.outputs.cache-hit != 'true'
+        run: sdkmanager --install "ndk;27.0.12077973" "cmake;3.22.1"
+
+      - name: Accept Android SDK licenses
+        run: yes | sdkmanager --licenses || true
+
+      - name: Grant execute permission for gradlew
+        run: chmod +x ./gradlew
+
+      - name: Build Debug APK
+        run: ./gradlew assembleDebug --no-daemon --stacktrace
+
+      - name: Verify Debug APK
+        run: |
+          echo "=== APK Verification ==="
+          find app/build/outputs/apk -type f -name "*.apk" -print
+          ls -lh app/build/outputs/apk/debug/app-debug.apk
+          echo "========================"
+
+      - name: Upload Debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: GP-Mapper-debug-${{ github.sha }}
+          path: app/build/outputs/apk/debug/app-debug.apk
+          retention-days: 14
+          if-no-files-found: error
+
+      - name: Build Release APK
+        if: success()
+        continue-on-error: true
+        run: ./gradlew assembleRelease --no-daemon --stacktrace
+
+      - name: Upload Release APK
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: GP-Mapper-release-${{ github.sha }}
+          path: app/build/outputs/apk/release/app-release-unsigned.apk
+          retention-days: 14
+          if-no-files-found: ignore
