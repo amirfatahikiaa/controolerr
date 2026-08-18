@@ -68,7 +68,7 @@ fun GPMapperUI() {
 
     LaunchedEffect(Unit) {
         shizukuRunning = app.checkShizukuRunning()
-        shizukuAuthorized = app.shizukuAuthorized
+        shizukuAuthorized = GPMapperApp.shizukuAuthorized
     }
 
     Scaffold(

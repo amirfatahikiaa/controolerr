@@ -88,7 +88,14 @@ class ShizukuDaemonBackend : InjectionBackend {
                 "sh", "-c",
                 "input touchscreen tap ${(x * 1080).toInt()} ${(y * 2340).toInt()}"
             )
-            val process = Shizuku.newProcess(cmd, null, null)
+            val method = Shizuku::class.java.getDeclaredMethod(
+                "newProcess",
+                Array<String>::class.java,
+                Array<String>::class.java,
+                String::class.java
+            )
+            method.isAccessible = true
+            val process = method.invoke(null, cmd, null, null) as Process
             val exitCode = process.waitFor()
             totalInjected++
             if (exitCode != 0) {

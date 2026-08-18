@@ -51,7 +51,7 @@ object IInputManagerBinderHelper {
             Log.i(TAG, "Binder alive: ${binder.isBinderAlive}")
 
             val wrappedBinder = ShizukuBinderWrapper(binder)
-            Log.i(TAG, "Wrapped binder obtained: ${wrappedBinder?.java?.name}")
+            Log.i(TAG, "Wrapped binder obtained: ${wrappedBinder?.javaClass?.name}")
 
             BinderAcquisitionResult(
                 success = true,
@@ -118,7 +118,7 @@ object IInputManagerBinderHelper {
 
             Log.i(TAG, "Invoking injectInputEvent via wrapped binder...")
             Log.i(TAG, "Event class: ${event.javaClass.name}")
-            Log.i(TAG, "Event: action=0x${Integer.toHexString(event.action)} eventTime=${event.eventTime}")
+            Log.i(TAG, "Event: action=0x${Integer.toHexString(event.getAction())} eventTime=${event.getEventTime()}")
 
             val invokeTs = System.nanoTime()
             val result = method.invoke(wrappedBinder, event, mode)
@@ -217,17 +217,18 @@ object IInputManagerBinderHelper {
         size: Float = 1.0f,
         source: Int = 0x00001002 // SOURCE_TOUCHSCREEN
     ): android.view.MotionEvent {
+        val pp = android.view.MotionEvent.PointerProperties()
+        pp.id = pointerId
+        pp.toolType = android.view.MotionEvent.TOOL_TYPE_FINGER
+        val pc = android.view.MotionEvent.PointerCoords()
+        pc.x = x
+        pc.y = y
+        pc.pressure = pressure
+        pc.size = size
         return android.view.MotionEvent.obtain(
-            downTime,
-            eventTime,
-            action,
-            x, y,
-            pressure, size,
-            0, // metaState
-            1.0f, 1.0f, // x/y precision
-            0, 0, // device id, edge flags
-            source,
-            0 // flags
+            downTime, eventTime, action, 1,
+            arrayOf(pp), arrayOf(pc),
+            0, source, 0, 0
         )
     }
 
