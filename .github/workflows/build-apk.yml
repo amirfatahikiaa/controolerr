@@ -10,8 +10,6 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
 
     steps:
       - name: Checkout repository
@@ -45,15 +43,6 @@ jobs:
 
       - name: Grant execute permission for gradlew
         run: chmod +x ./gradlew
-
-      - name: Print build environment
-        run: |
-          echo "=== Build Environment ==="
-          java -version
-          echo "ANDROID_HOME=$ANDROID_HOME"
-          echo "NDK version: $(cat $ANDROID_HOME/ndk/27.0.12077973/source.properties | grep Pkg.Revision)"
-          echo "CMake version: $(cat $ANDROID_HOME/cmake/3.22.1/source.properties | grep Pkg.Revision)"
-          echo "========================="
 
       - name: Build Debug APK
         run: ./gradlew assembleDebug --no-daemon --stacktrace
