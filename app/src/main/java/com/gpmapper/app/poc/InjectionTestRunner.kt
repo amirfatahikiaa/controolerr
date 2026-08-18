@@ -75,56 +75,75 @@ class InjectionTestRunner(
 
     private fun runTestSequence() {
         Thread {
-            Log.i(TAG, "=== Starting Injection Test Sequence ===")
+            try {
+                Log.i(TAG, "=== Starting Injection Test Sequence ===")
 
-            val acquireResult = binderHelper.acquireInputManagerBinder()
-            rawBinder = acquireResult.binder
-            wrappedBinder = acquireResult.wrappedBinder
+                val acquireResult = binderHelper.acquireInputManagerBinder()
+                rawBinder = acquireResult.binder
+                wrappedBinder = acquireResult.wrappedBinder
 
-            val binderStep = StepResult(
-                name = "Binder Acquisition",
-                success = acquireResult.success,
-                stage = "BINDER_ACQUIRE",
-                details = acquireResult.error ?: "Raw binder: ${acquireResult.binder != null}, " +
-                        "Wrapped: ${acquireResult.wrappedBinder != null}"
-            )
+                val binderStep = StepResult(
+                    name = "Binder Acquisition",
+                    success = acquireResult.success,
+                    stage = "BINDER_ACQUIRE",
+                    details = acquireResult.error ?: "Raw binder: ${acquireResult.binder != null}, " +
+                            "Wrapped: ${acquireResult.wrappedBinder != null}"
+                )
 
-            if (!acquireResult.success) {
-                val result = TestResult(
+                if (!acquireResult.success) {
+                    val result = TestResult(
+                        testName = "Binder Acquisition",
+                        timestamp = System.currentTimeMillis(),
+                        steps = listOf(binderStep),
+                        overallSuccess = false,
+                        classification = Classification.BLOCKED
+                    )
+                    results.add(result)
+                    onResult(result)
+                    return@Thread
+                }
+
+                onResult(TestResult(
                     testName = "Binder Acquisition",
                     timestamp = System.currentTimeMillis(),
                     steps = listOf(binderStep),
+                    overallSuccess = true,
+                    classification = Classification.UNVERIFIED
+                ))
+
+                Log.i(TAG, "Binder acquired. Running tap test...")
+                Thread.sleep(500)
+                runTapTest()
+
+                Thread.sleep(1000)
+                Log.i(TAG, "Running swipe test...")
+                runSwipeTest()
+
+                Thread.sleep(1000)
+                Log.i(TAG, "Running two-pointer test...")
+                runTwoPointerTest()
+
+                Log.i(TAG, "=== Test Sequence Complete ===")
+            } catch (e: Exception) {
+                Log.e(TAG, "Test sequence crashed", e)
+                val crashResult = TestResult(
+                    testName = "TEST_SEQUENCE_CRASH",
+                    timestamp = System.currentTimeMillis(),
+                    steps = listOf(StepResult(
+                        name = "Unhandled exception",
+                        success = false,
+                        stage = "CRASH",
+                        details = "${e.javaClass.name}: ${e.message}",
+                        exception = e
+                    )),
                     overallSuccess = false,
-                    classification = Classification.BLOCKED
+                    classification = Classification.FAILED
                 )
-                results.add(result)
-                onResult(result)
+                results.add(crashResult)
+                onResult(crashResult)
+            } finally {
                 running.set(false)
-                return@Thread
             }
-
-            onResult(TestResult(
-                testName = "Binder Acquisition",
-                timestamp = System.currentTimeMillis(),
-                steps = listOf(binderStep),
-                overallSuccess = true,
-                classification = Classification.UNVERIFIED
-            ))
-
-            Log.i(TAG, "Binder acquired. Running tap test...")
-            Thread.sleep(500)
-            runTapTest()
-
-            Thread.sleep(1000)
-            Log.i(TAG, "Running swipe test...")
-            runSwipeTest()
-
-            Thread.sleep(1000)
-            Log.i(TAG, "Running two-pointer test...")
-            runTwoPointerTest()
-
-            running.set(false)
-            Log.i(TAG, "=== Test Sequence Complete ===")
         }.start()
     }
 

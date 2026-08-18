@@ -264,6 +264,8 @@ class PoCActivity : Activity() {
     }
 
     private fun runTests() {
+        Log.i(TAG, "runTests() called, shizukuBound=$shizukuBound, shizukuAuthorized=$shizukuAuthorized")
+
         if (testRunner.isRunning()) {
             appendLog("Tests already running...")
             return
@@ -286,7 +288,12 @@ class PoCActivity : Activity() {
 
         appendLog("=== Starting Injection Tests ===")
         appendLog("Shizuku: bound=$shizukuBound authorized=$shizukuAuthorized")
-        testRunner.runAllTests()
+        try {
+            testRunner.runAllTests()
+        } catch (e: Exception) {
+            Log.e(TAG, "runAllTests threw synchronously", e)
+            appendLog("FATAL: runAllTests threw: ${e.javaClass.name}: ${e.message}")
+        }
     }
 
     private fun clearAll() {
