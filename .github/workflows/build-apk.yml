@@ -1,11 +1,11 @@
-name: Build GP-Mapper APK
-
-on:
+"on":
   push:
     branches: [ main, develop ]
   pull_request:
     branches: [ main ]
   workflow_dispatch:
+
+name: Build GP-Mapper APK
 
 jobs:
   build:
@@ -32,7 +32,7 @@ jobs:
           path: |
             ${{ env.ANDROID_HOME }}/ndk/27.0.12077973
             ${{ env.ANDROID_HOME }}/cmake/3.22.1
-          key: ndk-27.0.12077973-cmake-3.22.1-v2
+          key: ndk-cmake-27-cmake-32-v3
 
       - name: Install Android NDK and CMake
         if: steps.cache-ndk.outputs.cache-hit != 'true'
