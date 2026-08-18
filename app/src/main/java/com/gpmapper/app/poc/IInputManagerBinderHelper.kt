@@ -118,7 +118,7 @@ object IInputManagerBinderHelper {
 
             Log.i(TAG, "Invoking injectInputEvent via wrapped binder...")
             Log.i(TAG, "Event class: ${event.javaClass.name}")
-            Log.i(TAG, "Event: action=0x${Integer.toHexString(event.getAction())} eventTime=${event.getEventTime()}")
+            Log.i(TAG, "Event: flags=0x${Integer.toHexString(event.getFlags())} eventTime=${event.getEventTime()}")
 
             val invokeTs = System.nanoTime()
             val result = method.invoke(wrappedBinder, event, mode)
@@ -206,6 +206,22 @@ object IInputManagerBinderHelper {
         }
     }
 
+    private val obtainMethod: java.lang.reflect.Method? by lazy {
+        try {
+            val methods = android.view.MotionEvent::class.java.declaredMethods
+            methods.firstOrNull { m ->
+                m.name == "obtain" &&
+                java.lang.reflect.Modifier.isStatic(m.modifiers) &&
+                m.parameterTypes.size == 10 &&
+                m.parameterTypes[4].isArray &&
+                m.parameterTypes[4].componentType?.name?.contains("PointerProperties") == true
+            }?.also { it.isAccessible = true }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to resolve MotionEvent.obtain(PointerProperties[]) overload", e)
+            null
+        }
+    }
+
     fun createMotionEvent(
         action: Int,
         x: Float,
@@ -225,11 +241,15 @@ object IInputManagerBinderHelper {
         pc.y = y
         pc.pressure = pressure
         pc.size = size
-        return android.view.MotionEvent.obtain(
-            downTime, eventTime, action, 1,
-            arrayOf(pp), arrayOf(pc),
+        val ppArray = arrayOf(pp)
+        val pcArray = arrayOf(pc)
+        @Suppress("UNCHECKED_CAST")
+        return obtainMethod?.invoke(
+            null, downTime, eventTime, action, 1,
+            ppArray, pcArray,
             0, source, 0, 0
-        )
+        ) as android.view.MotionEvent
+            ?: throw IllegalStateException("MotionEvent.obtain method not resolved")
     }
 
     fun createTapMotionEvents(
