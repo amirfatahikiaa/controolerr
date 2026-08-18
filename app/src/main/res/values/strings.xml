@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">GP-Mapper</string>
+    <string name="mapping_service_channel">Mapping Service</string>
+    <string name="overlay_service_channel">Overlay Service</string>
+    <string name="mapping_notification_title">Gamepad Mapper Active</string>
+    <string name="mapping_notification_text">Controller mapping is running</string>
+    <string name="overlay_notification_title">Overlay Active</string>
+    <string name="overlay_notification_text">Tap to configure mappings</string>
+    <string name="shizuku_not_running">Shizuku is not running. Please start Shizuku first.</string>
+    <string name="service_started">Mapping service started</string>
+    <string name="service_stopped">Mapping service stopped</string>
+    <string name="permission_denied">Overlay permission required</string>
+    <string name="no_controller">No gamepad connected</string>
+    <string name="controller_connected">Controller connected: %s</string>
+</resources>
