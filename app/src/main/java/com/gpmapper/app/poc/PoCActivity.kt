@@ -254,12 +254,10 @@ class PoCActivity : Activity() {
             val token = decorView?.windowToken
                 val loc = IntArray(2)
                 decorView?.getLocationOnScreen(loc)
-                val resumed = try { isResumed } catch (_: Exception) { false }
 
                 buildString {
                     append("focused=${focused != null}")
                     append(" focusClass=${focused?.javaClass?.simpleName}")
-                    append(" resumed=$resumed")
                     append(" token=${token != null}")
                     append(" visible=${decorView?.visibility == View.VISIBLE}")
                     append(" windowW=${w?.attributes?.width}")
