@@ -12,6 +12,7 @@ class InjectionTestRunner(
     private val canvas: VisualTouchCanvas,
     private val onResult: (TestResult) -> Unit,
     private val onLatencySample: (LatencySample) -> Unit,
+    private val onBinderLatency: (Long) -> Unit,
     private val getDisplayId: () -> Int = { 0 },
     private val getWindowInfo: () -> String = { "unknown" },
     private val getReceiverCount: () -> Int = { 0 }
@@ -21,7 +22,6 @@ class InjectionTestRunner(
         private const val TAG = "InjectionTestRunner"
         private const val INJECT_DELAY_MS = 80L
         private const val INJECT_INPUT_EVENT_MODE_ASYNC = 0
-        private const val INJECT_INPUT_EVENT_MODE_WAIT_FOR_FINISH = 1
     }
 
     data class TestResult(
@@ -55,7 +55,8 @@ class InjectionTestRunner(
         val injectReturnNs: Long,
         val receiverTimestampNs: Long,
         val binderReturnUs: Float,
-        val e2eUs: Float
+        val e2eUs: Float,
+        val e2eAvailable: Boolean
     )
 
     private val handler = Handler(Looper.getMainLooper())
@@ -128,7 +129,7 @@ class InjectionTestRunner(
                     classification = Classification.UNVERIFIED
                 ))
 
-                Log.i(TAG, "Binder acquired. Running tap test...")
+                Log.i(TAG, "Binder acquired. Running tests...")
                 Thread.sleep(500)
                 runTapTest()
 
@@ -137,8 +138,8 @@ class InjectionTestRunner(
                 runSwipeTest()
 
                 Thread.sleep(1000)
-                Log.i(TAG, "Running two-pointer test...")
-                runTwoPointerTest()
+                Log.i(TAG, "Running multi-touch sub-tests...")
+                runMultiTouchSubTests()
 
                 Log.i(TAG, "=== Test Sequence Complete ===")
             } catch (e: Exception) {
@@ -172,13 +173,11 @@ class InjectionTestRunner(
         val method = injectMethod
         if (mgr == null || method == null) {
             return IInputManagerBinderHelper.InjectionResult(
-                "A_NO_PROXY", false, 0, null,
+                "A_NO_PROXY", false, 0, 0, null,
                 "IInputManager proxy not available (mgr=$mgr, method=$method)"
             )
         }
 
-        Log.i(TAG, "injectEvent: mode=$mode " +
-                "(0=ASYNC, 1=WAIT_FOR_FINISH)")
         Log.i(TAG, MotionEventFactory.diagnoseEvent(event, "PRE-INJECT"))
 
         return binderHelper.injectViaProxy(mgr, method, event, mode)
@@ -211,11 +210,12 @@ class InjectionTestRunner(
             downResult.success,
             "C_INJECT",
             "mode=ASYNC(0) returned=${downResult.success} " +
-                    "stage=${downResult.stage} " +
-                    "binderReturnNs=${downResult.binderReturnTimestampNs} " +
+                    "binderLatencyNs=${downResult.binderLatencyNs} " +
                     (downResult.errorMessage ?: ""),
             downResult.exception
         ))
+
+        if (downResult.success) onBinderLatency(downResult.binderLatencyNs)
 
         Thread.sleep(INJECT_DELAY_MS)
 
@@ -230,9 +230,11 @@ class InjectionTestRunner(
             "Stage C: inject UP returned",
             upResult.success,
             "C_INJECT_UP",
-            "returned=${upResult.success}",
+            "returned=${upResult.success} binderLatencyNs=${upResult.binderLatencyNs}",
             upResult.exception
         ))
+
+        if (upResult.success) onBinderLatency(upResult.binderLatencyNs)
 
         Thread.sleep(200)
 
@@ -240,40 +242,37 @@ class InjectionTestRunner(
         val receiverEvents = canvas.getRecords().filter {
             it.wallClockMs >= testStart
         }
-        val injectedOnCanvas = receiverEvents.filter { it.isInjected }
-        val anyOnCanvas = receiverEvents
 
         steps.add(StepResult(
             "Stage D: Framework/receiver observation",
-            anyOnCanvas.isNotEmpty(),
+            receiverEvents.isNotEmpty(),
             "D_RECEIVE",
-            "totalReceived=${anyOnCanvas.size} " +
-                    "injectedTagged=${injectedOnCanvas.size} " +
-                    "receiversBefore=$receiverBefore after=$receiverAfter " +
-                    "canvasRecords=${canvas.getRecords().size}"
+            "totalReceived=${receiverEvents.size} " +
+                    "receiversBefore=$receiverBefore after=$receiverAfter"
         ))
 
         val allSuccess = steps.all { it.success }
-        val receiverGotEvents = anyOnCanvas.isNotEmpty()
+        val receiverGotEvents = receiverEvents.isNotEmpty()
 
         val classification = when {
             allSuccess && receiverGotEvents -> Classification.VERIFIED
             allSuccess && !receiverGotEvents -> Classification.UNVERIFIED
             downResult.success && !receiverGotEvents -> Classification.PARTIALLY_VERIFIED
             downResult.errorMessage?.contains("SecurityException") == true -> Classification.BLOCKED
-            downResult.errorMessage?.contains("SELinux") == true -> Classification.BLOCKED
             else -> Classification.FAILED
         }
 
-        if (downResult.success && anyOnCanvas.isNotEmpty()) {
+        if (downResult.success) {
+            val binderReturnNs = downResult.binderLatencyNs
             val sample = LatencySample(
                 testName = "tap",
                 createdNs = createTs,
                 injectInvokeNs = injectTs,
                 injectReturnNs = downResult.binderReturnTimestampNs,
-                receiverTimestampNs = anyOnCanvas.first().timestampNs,
-                binderReturnUs = (downResult.binderReturnTimestampNs - injectTs) / 1000f,
-                e2eUs = (anyOnCanvas.first().timestampNs - createTs) / 1000f
+                receiverTimestampNs = if (receiverEvents.isNotEmpty()) receiverEvents.first().timestampNs else 0,
+                binderReturnUs = binderReturnNs / 1000f,
+                e2eUs = 0f,
+                e2eAvailable = false
             )
             onLatencySample(sample)
         }
@@ -308,25 +307,22 @@ class InjectionTestRunner(
         ))
 
         var allInjected = true
-        val firstResult: IInputManagerBinderHelper.InjectionResult?
+        var firstResult: IInputManagerBinderHelper.InjectionResult? = null
         var lastResult: IInputManagerBinderHelper.InjectionResult? = null
-
-        val createTs = System.nanoTime()
-        val injectTs = System.nanoTime()
 
         if (events.isNotEmpty()) {
             val result = injectEvent(events[0], INJECT_INPUT_EVENT_MODE_ASYNC)
             firstResult = result
             if (!result.success) allInjected = false
+            if (result.success) onBinderLatency(result.binderLatencyNs)
 
             for (i in 1 until events.size) {
                 Thread.sleep(INJECT_DELAY_MS / events.size)
                 val moveResult = injectEvent(events[i], INJECT_INPUT_EVENT_MODE_ASYNC)
                 if (!moveResult.success) allInjected = false
+                if (moveResult.success) onBinderLatency(moveResult.binderLatencyNs)
                 lastResult = moveResult
             }
-        } else {
-            firstResult = null
         }
 
         steps.add(StepResult(
@@ -346,7 +342,7 @@ class InjectionTestRunner(
             "Receiver-side verification",
             receiverEvents.isNotEmpty(),
             "RECEIVE_CHECK",
-            "Received ${receiverEvents.size} events (${receiverEvents.count { it.isInjected }} tagged INJ)"
+            "Received ${receiverEvents.size} events"
         ))
 
         val allSuccess = steps.all { it.success }
@@ -358,19 +354,6 @@ class InjectionTestRunner(
             firstResult?.success == true && !receiverGotEvents -> Classification.PARTIALLY_VERIFIED
             firstResult?.errorMessage?.contains("SecurityException") == true -> Classification.BLOCKED
             else -> Classification.FAILED
-        }
-
-        if (firstResult?.success == true && receiverEvents.isNotEmpty()) {
-            val sample = LatencySample(
-                testName = "swipe",
-                createdNs = createTs,
-                injectInvokeNs = injectTs,
-                injectReturnNs = lastResult?.binderReturnTimestampNs ?: 0,
-                receiverTimestampNs = receiverEvents.last().timestampNs,
-                binderReturnUs = ((lastResult?.binderReturnTimestampNs ?: 0) - injectTs) / 1000f,
-                e2eUs = (receiverEvents.last().timestampNs - createTs) / 1000f
-            )
-            onLatencySample(sample)
         }
 
         val testResult = TestResult(
@@ -387,72 +370,172 @@ class InjectionTestRunner(
         events.forEach { it.recycle() }
     }
 
-    private fun runTwoPointerTest() {
-        val testStart = System.currentTimeMillis()
-        val steps = mutableListOf<StepResult>()
+    private fun runMultiTouchSubTests() {
+        val downTime = SystemClock.uptimeMillis()
 
-        val events = binderHelper.createTwoPointerMotionEvents(
-            400f, 1000f, 680f, 1000f,
-            durationMs = 50
+        runSubTest(
+            "D1: DOWN only (single pointer)",
+            listOf(
+                binderHelper.createMotionEvent(
+                    MotionEvent.ACTION_DOWN, 400f, 1000f,
+                    downTime, downTime, 0
+                )
+            ),
+            300
         )
 
+        Thread.sleep(500)
+
+        val dt2 = SystemClock.uptimeMillis()
+        val events2 = mutableListOf<MotionEvent>()
+        events2.add(binderHelper.createMotionEvent(
+            MotionEvent.ACTION_DOWN, 400f, 1000f,
+            dt2, dt2, 0
+        ))
+        events2.add(binderHelper.createMultiPointerMotionEvent(
+            MotionEvent.ACTION_POINTER_DOWN, 680f, 1000f,
+            dt2, dt2 + 10, 1, pointerCount = 2
+        ))
+
+        runSubTest(
+            "D2: DOWN + POINTER_DOWN (2 pointers)",
+            events2,
+            300
+        )
+
+        Thread.sleep(500)
+
+        val dt3 = SystemClock.uptimeMillis()
+        val events3 = mutableListOf<MotionEvent>()
+        events3.add(binderHelper.createMotionEvent(
+            MotionEvent.ACTION_DOWN, 400f, 1000f,
+            dt3, dt3, 0
+        ))
+        events3.add(binderHelper.createMultiPointerMotionEvent(
+            MotionEvent.ACTION_POINTER_DOWN, 680f, 1000f,
+            dt3, dt3 + 10, 1, pointerCount = 2
+        ))
+        events3.add(binderHelper.createMultiPointerMotionEvent(
+            MotionEvent.ACTION_MOVE, 410f, 1010f,
+            dt3, dt3 + 30, 0, pointerCount = 2
+        ))
+
+        runSubTest(
+            "D3: DOWN + POINTER_DOWN + MOVE",
+            events3,
+            300
+        )
+
+        Thread.sleep(500)
+
+        val dt4 = SystemClock.uptimeMillis()
+        val events4 = mutableListOf<MotionEvent>()
+        events4.add(binderHelper.createMotionEvent(
+            MotionEvent.ACTION_DOWN, 400f, 1000f,
+            dt4, dt4, 0
+        ))
+        events4.add(binderHelper.createMultiPointerMotionEvent(
+            MotionEvent.ACTION_POINTER_DOWN, 680f, 1000f,
+            dt4, dt4 + 10, 1, pointerCount = 2
+        ))
+        events4.add(binderHelper.createMultiPointerMotionEvent(
+            MotionEvent.ACTION_MOVE, 410f, 1010f,
+            dt4, dt4 + 30, 0, pointerCount = 2
+        ))
+        events4.add(binderHelper.createMultiPointerMotionEvent(
+            MotionEvent.ACTION_POINTER_UP, 680f, 1000f,
+            dt4, dt4 + 50, 1, pointerCount = 2
+        ))
+        events4.add(binderHelper.createMotionEvent(
+            MotionEvent.ACTION_UP, 410f, 1010f,
+            dt4, dt4 + 60, 0
+        ))
+
+        runSubTest(
+            "D4: DOWN -> PDOWN -> MOVE -> PUP -> UP (full sequence)",
+            events4,
+            300
+        )
+    }
+
+    private fun runSubTest(
+        testName: String,
+        events: List<MotionEvent>,
+        waitAfterMs: Int
+    ) {
+        val testStart = System.currentTimeMillis()
+        val steps = mutableListOf<StepResult>()
+        val receiverBefore = getReceiverCount()
+
         steps.add(StepResult(
-            "Create two-pointer events",
-            true, "CREATE", "${events.size} events"
+            "Create events",
+            true, "CREATE",
+            "${events.size} events: " + events.map {
+                "0x${Integer.toHexString(it.actionMasked)}(ptrs=${it.pointerCount})"
+            }.joinToString(" -> ")
         ))
 
         var allInjected = true
-        val firstResult: IInputManagerBinderHelper.InjectionResult?
+        var lastResult: IInputManagerBinderHelper.InjectionResult? = null
+        val binderLatencies = mutableListOf<Long>()
 
-        val injectTs = System.nanoTime()
-
-        if (events.isNotEmpty()) {
-            val result = injectEvent(events[0], INJECT_INPUT_EVENT_MODE_ASYNC)
-            firstResult = result
+        for ((idx, event) in events.withIndex()) {
+            val result = injectEvent(event, INJECT_INPUT_EVENT_MODE_ASYNC)
             if (!result.success) allInjected = false
-
-            for (i in 1 until events.size) {
-                Thread.sleep(INJECT_DELAY_MS / events.size)
-                val r = injectEvent(events[i], INJECT_INPUT_EVENT_MODE_ASYNC)
-                if (!r.success) allInjected = false
+            if (result.success) {
+                onBinderLatency(result.binderLatencyNs)
+                binderLatencies.add(result.binderLatencyNs)
             }
-        } else {
-            firstResult = null
+            lastResult = result
+            if (idx < events.size - 1) {
+                Thread.sleep(10)
+            }
         }
 
         steps.add(StepResult(
             "Inject ${events.size} events",
             allInjected,
-            "MULTI_INJECT",
-            "first=${firstResult?.success}"
+            "INJECT",
+            "allSuccess=$allInjected last=${lastResult?.success}"
         ))
 
-        Thread.sleep(200)
+        Thread.sleep(waitAfterMs.toLong())
 
+        val receiverAfter = getReceiverCount()
         val receiverEvents = canvas.getRecords().filter {
             it.wallClockMs >= testStart
         }
 
+        val eventSummary = events.joinToString(", ") { ev ->
+            "0x${Integer.toHexString(ev.actionMasked)}(ptrs=${ev.pointerCount})"
+        }
+        val receivedSummary = receiverEvents.joinToString(", ") { rec ->
+            "${rec.action}(ptrs=${rec.pointerCount})"
+        }
+
         steps.add(StepResult(
             "Receiver-side verification",
-            receiverEvents.isNotEmpty(),
+            receiverEvents.size >= events.size,
             "RECEIVE_CHECK",
-            "Received ${receiverEvents.size} events (${receiverEvents.count { it.isInjected }} tagged INJ)"
+            "expected=${events.size} received=${receiverEvents.size} " +
+                    "delta=${receiverEvents.size - events.size} " +
+                    "events=[$eventSummary] received=[$receivedSummary]"
         ))
 
         val allSuccess = steps.all { it.success }
         val receiverGotEvents = receiverEvents.isNotEmpty()
+        val receiverCount = receiverEvents.size
 
         val classification = when {
-            allSuccess && receiverGotEvents -> Classification.VERIFIED
-            allSuccess && !receiverGotEvents -> Classification.UNVERIFIED
-            firstResult?.success == true && !receiverGotEvents -> Classification.PARTIALLY_VERIFIED
-            firstResult?.errorMessage?.contains("SecurityException") == true -> Classification.BLOCKED
+            receiverCount == events.size -> Classification.VERIFIED
+            receiverCount > 0 && receiverCount < events.size -> Classification.PARTIALLY_VERIFIED
+            allInjected && receiverCount == 0 -> Classification.UNVERIFIED
+            !allInjected -> Classification.FAILED
             else -> Classification.FAILED
         }
 
         val testResult = TestResult(
-            testName = "C: Two-Pointer (DOWN -> PDOWN -> MOVE -> PUP -> UP)",
+            testName = testName,
             timestamp = testStart,
             steps = steps,
             overallSuccess = allSuccess,

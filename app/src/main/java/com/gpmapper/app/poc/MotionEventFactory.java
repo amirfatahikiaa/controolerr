@@ -4,6 +4,9 @@ import android.util.Log;
 import android.view.InputDevice;
 import android.view.MotionEvent;
 
+import java.lang.reflect.Constructor;
+import java.lang.reflect.Method;
+
 public class MotionEventFactory {
 
     private static final String TAG = "MEventFactory";
@@ -33,6 +36,77 @@ public class MotionEventFactory {
             return event;
         } catch (Exception e) {
             lastResult = "FAILED: " + e;
+            Log.e(TAG, lastResult, e);
+            throw new RuntimeException(lastResult, e);
+        }
+    }
+
+    public static MotionEvent createMultiPointer(
+            int action, float x, float y,
+            long downTime, long eventTime,
+            int pointerId, float pressure, float size,
+            int source, int pointerCount
+    ) {
+        try {
+            Class<?> ppClass = Class.forName("android.view.MotionEvent$PointerProperties");
+            Class<?> pcClass = Class.forName("android.view.MotionEvent$PointerCoords");
+            Constructor<?> ppCtor = ppClass.getDeclaredConstructor();
+            Constructor<?> pcCtor = pcClass.getDeclaredConstructor();
+            ppCtor.setAccessible(true);
+            pcCtor.setAccessible(true);
+
+            Method ppSetMethod = ppClass.getMethod("setTo", ppClass);
+            Method pcSetMethod = pcClass.getMethod("setTo", pcClass);
+
+            Object[] ppArray = new Object[pointerCount];
+            Object[] pcArray = new Object[pointerCount];
+            for (int i = 0; i < pointerCount; i++) {
+                ppArray[i] = ppCtor.newInstance();
+                pcArray[i] = pcCtor.newInstance();
+
+                Method idSetter = ppClass.getMethod("setId", int.class);
+                idSetter.invoke(ppArray[i], i);
+
+                Method xSetter = pcClass.getMethod("setX", float.class);
+                Method ySetter = pcClass.getMethod("setY", float.class);
+                Method pSetter = pcClass.getMethod("setPressure", float.class);
+                Method sSetter = pcClass.getMethod("setSize", float.class);
+
+                if (i == pointerId || (pointerId == 0 && i == 0)) {
+                    xSetter.invoke(pcArray[i], x);
+                    ySetter.invoke(pcArray[i], y);
+                    pSetter.invoke(pcArray[i], pressure);
+                    sSetter.invoke(pcArray[i], size);
+                } else {
+                    xSetter.invoke(pcArray[i], 0f);
+                    ySetter.invoke(pcArray[i], 0f);
+                    pSetter.invoke(pcArray[i], 0f);
+                    sSetter.invoke(pcArray[i], 0f);
+                }
+            }
+
+            MotionEvent event = MotionEvent.obtain(
+                    downTime,
+                    eventTime,
+                    action,
+                    pointerCount,
+                    ppArray,
+                    pcArray,
+                    0,
+                    0,
+                    1.0f,
+                    1.0f,
+                    0,
+                    0,
+                    source,
+                    0
+            );
+
+            lastResult = "SUCCESS_MULTI";
+            Log.i(TAG, lastResult + " ptrCount=" + pointerCount + " action=0x" + Integer.toHexString(action));
+            return event;
+        } catch (Exception e) {
+            lastResult = "FAILED_MULTI: " + e;
             Log.e(TAG, lastResult, e);
             throw new RuntimeException(lastResult, e);
         }

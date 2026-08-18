@@ -1,7 +1,6 @@
 package com.gpmapper.app.poc
 
 import java.util.concurrent.CopyOnWriteArrayList
-import kotlin.math.sqrt
 
 class LatencyRecorder {
 
@@ -12,7 +11,8 @@ class LatencyRecorder {
         val injectReturnNs: Long,
         val receiverTimestampNs: Long,
         val binderReturnUs: Float,
-        val e2eUs: Float
+        val e2eUs: Float,
+        val e2eAvailable: Boolean
     )
 
     data class Stats(
@@ -23,25 +23,15 @@ class LatencyRecorder {
         val p95BinderReturnUs: Float,
         val p99BinderReturnUs: Float,
         val minBinderReturnUs: Float,
-        val maxBinderReturnUs: Float,
-        val avgE2EUs: Float,
-        val p50E2EUs: Float,
-        val p95E2EUs: Float,
-        val minE2EUs: Float,
-        val maxE2EUs: Float
+        val maxBinderReturnUs: Float
     ) {
         override fun toString(): String {
             return buildString {
-                appendLine("=== Latency Stats: $testName ($count samples) ===")
-                appendLine("Binder Return (us): avg=%.1f p50=%.1f p95=%.1f p99=%.1f min=%.1f max=%.1f".format(
+                appendLine("=== Binder Latency: $testName ($count samples) ===")
+                appendLine("avg=%.1f us p50=%.1f us p95=%.1f us p99=%.1f us min=%.1f us max=%.1f us".format(
                     avgBinderReturnUs, p50BinderReturnUs, p95BinderReturnUs, p99BinderReturnUs,
                     minBinderReturnUs, maxBinderReturnUs
                 ))
-                appendLine("End-to-End  (us): avg=%.1f p50=%.1f p95=%.1f min=%.1f max=%.1f".format(
-                    avgE2EUs, p50E2EUs, p95E2EUs, minE2EUs, maxE2EUs
-                ))
-                appendLine("NOTE: Binder-return latency != end-to-end input-to-screen latency.")
-                appendLine("Receiver timestamps depend on the canvas touch handler, not the input pipeline.")
             }
         }
     }
@@ -60,7 +50,8 @@ class LatencyRecorder {
             injectReturnNs = result.injectReturnNs,
             receiverTimestampNs = result.receiverTimestampNs,
             binderReturnUs = result.binderReturnUs,
-            e2eUs = result.e2eUs
+            e2eUs = result.e2eUs,
+            e2eAvailable = result.e2eAvailable
         ))
     }
 
@@ -75,7 +66,6 @@ class LatencyRecorder {
 
         return grouped.map { (name, group) ->
             val binderReturns = group.map { it.binderReturnUs }.sorted()
-            val e2es = group.map { it.e2eUs }.sorted()
 
             Stats(
                 testName = name,
@@ -85,12 +75,7 @@ class LatencyRecorder {
                 p95BinderReturnUs = percentile(binderReturns, 95f),
                 p99BinderReturnUs = percentile(binderReturns, 99f),
                 minBinderReturnUs = binderReturns.minOrNull() ?: 0f,
-                maxBinderReturnUs = binderReturns.maxOrNull() ?: 0f,
-                avgE2EUs = e2es.average().toFloat(),
-                p50E2EUs = percentile(e2es, 50f),
-                p95E2EUs = percentile(e2es, 95f),
-                minE2EUs = e2es.minOrNull() ?: 0f,
-                maxE2EUs = e2es.maxOrNull() ?: 0f
+                maxBinderReturnUs = binderReturns.maxOrNull() ?: 0f
             )
         }
     }

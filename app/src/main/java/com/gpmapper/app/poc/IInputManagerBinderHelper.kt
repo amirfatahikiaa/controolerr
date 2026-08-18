@@ -28,6 +28,7 @@ object IInputManagerBinderHelper {
         val stage: String,
         val success: Boolean,
         val binderReturnTimestampNs: Long,
+        val binderLatencyNs: Long,
         val exception: Exception?,
         val errorMessage: String?
     )
@@ -35,7 +36,6 @@ object IInputManagerBinderHelper {
     @SuppressLint("PrivateApi", "DiscouragedPrivateApi")
     fun acquireInputManagerBinder(): BinderAcquisitionResult {
         try {
-            // 1. Get raw IInputManager binder via ServiceManager
             val smClass = Class.forName("android.os.ServiceManager")
             val getServiceMethod = smClass.getDeclaredMethod("getService", String::class.java)
             val rawBinder = getServiceMethod.invoke(null, SERVICE_NAME) as? IBinder
@@ -49,11 +49,9 @@ object IInputManagerBinderHelper {
             }
             Log.i(TAG, "Raw binder: ${rawBinder.javaClass.name} alive=${rawBinder.isBinderAlive}")
 
-            // 2. Wrap with ShizukuBinderWrapper so calls go through Shizuku's privileged process
             val wrappedBinder = ShizukuBinderWrapper(rawBinder)
             Log.i(TAG, "ShizukuBinderWrapper: ${wrappedBinder.javaClass.name}")
 
-            // 3. Resolve IInputManager.Stub.asInterface to get the AIDL proxy
             val stubClass = Class.forName("android.hardware.input.IInputManager\$Stub")
             val asInterfaceMethod = stubClass.getDeclaredMethod("asInterface", IBinder::class.java)
             val iInputManager = asInterfaceMethod.invoke(null, wrappedBinder)
@@ -67,7 +65,6 @@ object IInputManagerBinderHelper {
                 )
             }
 
-            // 4. Resolve injectInputEvent method on the IInputManager interface
             val iInputManagerClass = Class.forName("android.hardware.input.IInputManager")
             val injectMethod = iInputManagerClass.getDeclaredMethod(
                 "injectInputEvent",
@@ -95,20 +92,6 @@ object IInputManagerBinderHelper {
         }
     }
 
-    fun injectViaWrappedBinder(
-        wrappedBinder: IBinder,
-        event: android.view.InputEvent,
-        mode: Int = INJECT_INPUT_EVENT_MODE_ASYNC
-    ): InjectionResult {
-        return InjectionResult(
-            stage = "DEPRECATED",
-            success = false,
-            binderReturnTimestampNs = 0,
-            exception = null,
-            errorMessage = "injectViaWrappedBinder is deprecated. Use injectViaProxy."
-        )
-    }
-
     fun injectViaProxy(
         iInputManager: Any,
         injectMethod: java.lang.reflect.Method,
@@ -125,12 +108,14 @@ object IInputManagerBinderHelper {
             val returnTs = System.nanoTime()
 
             val success = result as? Boolean ?: false
-            Log.i(TAG, "injectInputEvent returned: $success (took ${returnTs - invokeTs}ns)")
+            val latencyNs = returnTs - invokeTs
+            Log.i(TAG, "injectInputEvent returned: $success (took ${latencyNs}ns)")
 
             InjectionResult(
                 stage = "INJECT_SUCCESS",
                 success = success,
                 binderReturnTimestampNs = returnTs,
+                binderLatencyNs = latencyNs,
                 exception = null,
                 errorMessage = if (!success) "injectInputEvent returned false" else null
             )
@@ -141,6 +126,7 @@ object IInputManagerBinderHelper {
                 stage = "INJECT_EXCEPTION",
                 success = false,
                 binderReturnTimestampNs = System.nanoTime(),
+                binderLatencyNs = 0,
                 exception = if (cause is Exception) cause else RuntimeException(cause),
                 errorMessage = "${cause.javaClass.name}: ${cause.message}"
             )
@@ -150,6 +136,7 @@ object IInputManagerBinderHelper {
                 stage = "INVOKE_EXCEPTION",
                 success = false,
                 binderReturnTimestampNs = System.nanoTime(),
+                binderLatencyNs = 0,
                 exception = e,
                 errorMessage = "${e.javaClass.name}: ${e.message}"
             )
@@ -165,9 +152,26 @@ object IInputManagerBinderHelper {
         pointerId: Int = 0,
         pressure: Float = 1.0f,
         size: Float = 1.0f,
-        source: Int = 0x00001002 // SOURCE_TOUCHSCREEN
+        source: Int = 0x00001002
     ): android.view.MotionEvent {
         return MotionEventFactory.create(action, x, y, downTime, eventTime, pointerId, pressure, size, source)
+    }
+
+    fun createMultiPointerMotionEvent(
+        action: Int,
+        x: Float,
+        y: Float,
+        downTime: Long,
+        eventTime: Long,
+        pointerId: Int,
+        pressure: Float = 1.0f,
+        size: Float = 1.0f,
+        source: Int = 0x00001002,
+        pointerCount: Int = 2
+    ): android.view.MotionEvent {
+        return MotionEventFactory.createMultiPointer(
+            action, x, y, downTime, eventTime, pointerId, pressure, size, source, pointerCount
+        )
     }
 
     fun createTapMotionEvents(
@@ -245,27 +249,28 @@ object IInputManagerBinderHelper {
             pointerId = 0
         ))
 
-        val pdownAction = (android.view.MotionEvent.ACTION_POINTER_DOWN or (1 shl 8))
-        events.add(createMotionEvent(
-            pdownAction,
+        events.add(createMultiPointerMotionEvent(
+            android.view.MotionEvent.ACTION_POINTER_DOWN,
             x2, y2,
             downTime, downTime + 10,
-            pointerId = 1
+            pointerId = 1,
+            pointerCount = 2
         ))
 
-        events.add(createMotionEvent(
+        events.add(createMultiPointerMotionEvent(
             android.view.MotionEvent.ACTION_MOVE,
             x1 + 10f, y1 + 10f,
             downTime, downTime + durationMs / 2,
-            pointerId = 0
+            pointerId = 0,
+            pointerCount = 2
         ))
 
-        val pupAction = (android.view.MotionEvent.ACTION_POINTER_UP or (1 shl 8))
-        events.add(createMotionEvent(
-            pupAction,
+        events.add(createMultiPointerMotionEvent(
+            android.view.MotionEvent.ACTION_POINTER_UP,
             x2, y2,
             downTime, downTime + durationMs - 10,
-            pointerId = 1
+            pointerId = 1,
+            pointerCount = 2
         ))
 
         events.add(createMotionEvent(

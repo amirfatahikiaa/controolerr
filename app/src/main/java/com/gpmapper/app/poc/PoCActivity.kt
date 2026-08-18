@@ -10,13 +10,11 @@ import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
 import android.util.Log
-import android.view.Gravity
 import android.view.InputDevice
 import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
-import android.view.WindowManager
 import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.ScrollView
@@ -48,8 +46,7 @@ class PoCActivity : Activity() {
     private var shizukuBound = false
     private var shizukuAuthorized = false
     private var rawEventCount = 0
-    private var physicalTouchCount = 0
-    private var injectedTouchCount = 0
+    private val binderLatencies = mutableListOf<Long>()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -193,17 +190,21 @@ class PoCActivity : Activity() {
             canvas = canvas,
             onResult = { result -> handler.post { onTestResult(result) } },
             onLatencySample = { sample -> handler.post { onLatencySample(sample) } },
+            onBinderLatency = { latencyNs -> handler.post { binderLatencies.add(latencyNs) } },
             getDisplayId = { getInjectionDisplayId() },
             getWindowInfo = { getWindowDiagnostics() },
             getReceiverCount = { rawEventCount }
         )
 
         canvas.onTouchReceived = { record ->
-            if (record.isInjected) injectedTouchCount++ else physicalTouchCount++
-            val tag = if (record.isInjected) "INJ" else "PHY"
-            appendDs4Log("[$tag] P${record.pointerId} ${record.action} " +
+            val classTag = when (record.classification) {
+                VisualTouchCanvas.EventClassification.RAW_PHYSICAL -> "PHY"
+                VisualTouchCanvas.EventClassification.INJECTED_CANDIDATE -> "INJ?"
+                VisualTouchCanvas.EventClassification.UNKNOWN -> "UNK"
+            }
+            appendDs4Log("[$classTag] P${record.pointerId} ${record.action} " +
                     "(%.1f,%.1f) dev=${record.deviceId} src=0x${Integer.toHexString(record.source)} " +
-                    "fl=0x${Integer.toHexString(record.flags)} eventTime=${record.eventTimeMs}".format(record.x, record.y))
+                    "fl=0x${Integer.toHexString(record.flags)} ptrs=${record.pointerCount} eventTime=${record.eventTimeMs}".format(record.x, record.y))
         }
 
         canvas.onRawMotionEvent = { event ->
@@ -211,38 +212,19 @@ class PoCActivity : Activity() {
             Log.d(TAG, "RAW_EVENT #$rawEventCount: action=0x${Integer.toHexString(event.actionMasked)} " +
                     "dev=${event.deviceId} src=0x${Integer.toHexString(event.source)} " +
                     "fl=0x${Integer.toHexString(event.getFlags())} " +
-                    "ptrs=${event.pointerCount} display=${getDisplayIdCompat(event)}")
+                    "ptrs=${event.pointerCount}")
         }
 
         initShizuku()
     }
 
-    private fun getDisplayIdCompat(event: MotionEvent): Int {
-        return try {
-            val method = MotionEvent::class.java.getMethod("getDisplayId")
-            method.invoke(event) as? Int ?: -1
-        } catch (e: Exception) {
-            try {
-                val field = MotionEvent::class.java.getField("mDisplayId")
-                field.getInt(event)
-            } catch (e2: Exception) {
-                -1
-            }
-        }
-    }
-
     private fun getInjectionDisplayId(): Int {
         return try {
             val display = display
-            val displayIdField = android.view.Display::class.java.getField("mDisplayId")
-            displayIdField.getInt(display)
+            val displayIdMethod = android.view.Display::class.java.getMethod("getDisplayId")
+            displayIdMethod.invoke(display) as? Int ?: 0
         } catch (e: Exception) {
-            try {
-                val displayIdMethod = android.view.Display::class.java.getMethod("getDisplayId")
-                displayIdMethod.invoke(display) as? Int ?: 0
-            } catch (e2: Exception) {
-                0
-            }
+            0
         }
     }
 
@@ -252,21 +234,21 @@ class PoCActivity : Activity() {
             val decorView = w?.decorView
             val focused = w?.currentFocus
             val token = decorView?.windowToken
-                val loc = IntArray(2)
-                decorView?.getLocationOnScreen(loc)
+            val loc = IntArray(2)
+            decorView?.getLocationOnScreen(loc)
 
-                buildString {
-                    append("focused=${focused != null}")
-                    append(" focusClass=${focused?.javaClass?.simpleName}")
-                    append(" token=${token != null}")
-                    append(" visible=${decorView?.visibility == View.VISIBLE}")
-                    append(" windowW=${w?.attributes?.width}")
-                    append(" windowH=${w?.attributes?.height}")
-                    append(" decorLoc=[${loc[0]},${loc[1]}]")
-                    append(" decorSize=${decorView?.width}x${decorView?.height}")
-                    append(" isFinishing=$isFinishing")
-                    append(" isDestroyed=$isDestroyed")
-                }
+            buildString {
+                append("focused=${focused != null}")
+                append(" focusClass=${focused?.javaClass?.simpleName}")
+                append(" token=${token != null}")
+                append(" visible=${decorView?.visibility == View.VISIBLE}")
+                append(" windowW=${w?.attributes?.width}")
+                append(" windowH=${w?.attributes?.height}")
+                append(" decorLoc=[${loc[0]},${loc[1]}]")
+                append(" decorSize=${decorView?.width}x${decorView?.height}")
+                append(" isFinishing=$isFinishing")
+                append(" isDestroyed=$isDestroyed")
+            }
         } catch (e: Exception) {
             "error=${e.message}"
         }
@@ -278,7 +260,7 @@ class PoCActivity : Activity() {
             appendLine("Android: ${Build.VERSION.RELEASE} (API ${Build.VERSION.SDK_INT})")
             appendLine("Process UID: ${android.os.Process.myUid()}")
             appendLine("Shizuku bound: $shizukuBound | authorized: $shizukuAuthorized")
-            appendLine("Raw events received: $rawEventCount (PHY=$physicalTouchCount INJ=$injectedTouchCount)")
+            appendLine("Raw events: $rawEventCount | Binder calls: ${binderLatencies.size}")
             append("Build: ${Build.DISPLAY}")
         }
     }
@@ -360,15 +342,15 @@ class PoCActivity : Activity() {
         }
 
         rawEventCount = 0
-        physicalTouchCount = 0
-        injectedTouchCount = 0
+        binderLatencies.clear()
 
         appendLog("=== Starting Injection Tests ===")
         appendLog("Shizuku: bound=$shizukuBound authorized=$shizukuAuthorized")
         appendLog("MotionEventFactory: ${MotionEventFactory.lastResult}")
         appendLog("Display ID: ${getInjectionDisplayId()}")
         appendLog("Window: ${getWindowDiagnostics()}")
-        appendLog("Raw events before test: $rawEventCount")
+        appendLog("NOTE: Event classification uses UNKNOWN (public SDK cannot set FLAG_INJECTED)")
+        appendLog("NOTE: E2E latency is UNAVAILABLE (different time domains)")
         try {
             testRunner.runAllTests()
         } catch (e: Exception) {
@@ -386,8 +368,7 @@ class PoCActivity : Activity() {
         canvas.clearRecords()
         latencyRecorder.clear()
         rawEventCount = 0
-        physicalTouchCount = 0
-        injectedTouchCount = 0
+        binderLatencies.clear()
         appendLog("Cleared all logs and canvas")
     }
 
@@ -404,31 +385,55 @@ class PoCActivity : Activity() {
             }
         }
 
-        appendLog("Receiver counters: raw=$rawEventCount phy=$physicalTouchCount inj=$injectedTouchCount")
+        if (result.classification == InjectionTestRunner.Classification.VERIFIED ||
+            result.classification == InjectionTestRunner.Classification.PARTIALLY_VERIFIED) {
+            updateLatencyDisplay()
+        }
     }
 
     private fun onLatencySample(sample: InjectionTestRunner.LatencySample) {
         latencyRecorder.recordFromTestResult(sample)
-        updateLatencyDisplay()
     }
 
     private fun updateLatencyDisplay() {
-        val stats = latencyRecorder.getStats()
-        if (stats.isEmpty()) {
-            latencyView.text = "No latency data yet."
+        if (binderLatencies.isEmpty()) {
+            latencyView.text = "No binder latency data yet."
             return
         }
 
+        val sorted = binderLatencies.sorted()
+        val count = sorted.size
+        val avg = sorted.average()
+        val min = sorted.minOrNull() ?: 0L
+        val max = sorted.maxOrNull() ?: 0L
+        val p50 = sorted[(count * 0.5).toInt().coerceIn(0, count - 1)]
+        val p95 = sorted[(count * 0.95).toInt().coerceIn(0, count - 1)]
+        val p99 = sorted[(count * 0.99).toInt().coerceIn(0, count - 1)]
+
         latencyView.text = buildString {
-            for (stat in stats) {
-                appendLine(stat.toString())
-            }
-            appendLine("=== IMPORTANT ===")
-            appendLine("Binder-return latency (time for injectInputEvent() to return)")
-            appendLine("is NOT the same as end-to-end input-to-screen latency.")
-            appendLine("Actual touch-to-display latency includes Android input pipeline,")
-            appendLine("window manager dispatch, and application rendering.")
-            appendLine("Physical measurement on the target device is required.")
+            appendLine("=== Binder Invocation Latency (per-event) ===")
+            appendLine("count=$count")
+            appendLine("avg=%.1f us".format(avg / 1000.0))
+            appendLine("p50=%.1f us".format(p50 / 1000.0))
+            appendLine("p95=%.1f us".format(p95 / 1000.0))
+            appendLine("p99=%.1f us".format(p99 / 1000.0))
+            appendLine("min=%.1f us".format(min / 1000.0))
+            appendLine("max=%.1f us".format(max / 1000.0))
+            appendLine()
+            appendLine("=== End-to-End Latency ===")
+            appendLine("STATUS: UNAVAILABLE")
+            appendLine("Reason: Receiver timestamps use eventTimeNanos (uptimeMillis-based)")
+            appendLine("while injection timestamps use System.nanoTime() (different domain).")
+            appendLine("Subtracting cross-domain timestamps produces invalid negative values.")
+            appendLine("True E2E latency requires same-clock-domain measurement or")
+            appendLine("physical oscilloscope measurement on the device.")
+            appendLine()
+            appendLine("=== What These Numbers Mean ===")
+            appendLine("Binder latency = time for IInputManager.injectInputEvent()")
+            appendLine("to return after the Shizuku binder call. This is the time")
+            appendLine("for the Binder IPC round-trip, NOT the time for the event")
+            appendLine("to reach the display. Actual touch-to-display latency")
+            appendLine("requires physical measurement.")
         }
     }
 
@@ -463,7 +468,6 @@ class PoCActivity : Activity() {
         val actionName = when (event.action) {
             KeyEvent.ACTION_DOWN -> "DOWN"
             KeyEvent.ACTION_UP -> "UP"
-            KeyEvent.ACTION_MULTIPLE -> "MULTIPLE"
             else -> "OTHER(${event.action})"
         }
 

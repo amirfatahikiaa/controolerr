@@ -23,7 +23,7 @@ class VisualTouchCanvas @JvmOverloads constructor(
         val pressure: Float,
         val timestampNs: Long,
         val wallClockMs: Long,
-        val isInjected: Boolean,
+        val classification: EventClassification,
         val eventTimeMs: Long,
         val deviceId: Int,
         val source: Int,
@@ -32,6 +32,12 @@ class VisualTouchCanvas @JvmOverloads constructor(
         val actionMasked: Int,
         val downTime: Long
     )
+
+    enum class EventClassification {
+        RAW_PHYSICAL,
+        INJECTED_CANDIDATE,
+        UNKNOWN
+    }
 
     private val records = CopyOnWriteArrayList<TouchRecord>()
     private val maxRecords = 200
@@ -143,8 +149,11 @@ class VisualTouchCanvas @JvmOverloads constructor(
         val pressure = event.getPressure(pointerIndex.coerceIn(0, event.pointerCount - 1))
 
         val hasInjectedFlag = (event.getFlags() and FLAG_INJECTED) != 0
-        val deviceIdIsZero = event.deviceId == 0
-        val isInjected = hasInjectedFlag || deviceIdIsZero
+        val classification = when {
+            hasInjectedFlag -> EventClassification.INJECTED_CANDIDATE
+            event.deviceId == 0 && event.source == 0x00001002 -> EventClassification.INJECTED_CANDIDATE
+            else -> EventClassification.UNKNOWN
+        }
 
         val record = TouchRecord(
             pointerId = pointerId,
@@ -154,7 +163,7 @@ class VisualTouchCanvas @JvmOverloads constructor(
             pressure = pressure,
             timestampNs = event.eventTimeNanos,
             wallClockMs = System.currentTimeMillis(),
-            isInjected = isInjected,
+            classification = classification,
             eventTimeMs = event.eventTime,
             deviceId = event.deviceId,
             source = event.source,
@@ -230,8 +239,7 @@ class VisualTouchCanvas @JvmOverloads constructor(
             if (trail.size < 2) continue
             val paint = when {
                 pointerId >= 100 -> injectedPaint
-                pointerId < 0 -> unknownPaint
-                else -> physicalPaint
+                else -> unknownPaint
             }
             for (i in 1 until trail.size) {
                 canvas.drawLine(trail[i - 1].x, trail[i - 1].y, trail[i].x, trail[i].y, paint)
@@ -241,13 +249,11 @@ class VisualTouchCanvas @JvmOverloads constructor(
         for ((pointerId, point) in activePointers) {
             val fillPaint = when {
                 pointerId >= 100 -> injectedFillPaint
-                pointerId < 0 -> unknownFillPaint
-                else -> physicalFillPaint
+                else -> unknownFillPaint
             }
             val strokePaint = when {
                 pointerId >= 100 -> injectedPaint
-                pointerId < 0 -> unknownPaint
-                else -> physicalPaint
+                else -> unknownPaint
             }
             canvas.drawCircle(point.x, point.y, 20f, fillPaint)
             canvas.drawCircle(point.x, point.y, 20f, strokePaint)
@@ -265,20 +271,25 @@ class VisualTouchCanvas @JvmOverloads constructor(
 
         for (record in recentRecords) {
             val timeStr = dateFormat.format(Date(record.wallClockMs))
-            val injectTag = if (record.isInjected) "[INJ]" else "[PHY]"
-            val line = "$timeStr $injectTag P${record.pointerId} ${record.action} " +
+            val classTag = when (record.classification) {
+                EventClassification.RAW_PHYSICAL -> "[PHY]"
+                EventClassification.INJECTED_CANDIDATE -> "[INJ?]"
+                EventClassification.UNKNOWN -> "[UNK]"
+            }
+            val line = "$timeStr $classTag P${record.pointerId} ${record.action} " +
                     "(%.1f, %.1f) dev=${record.deviceId} src=0x${Integer.toHexString(record.source)} " +
                     "fl=0x${Integer.toHexString(record.flags)}".format(record.x, record.y)
-            val linePaint = when {
-                record.isInjected -> injectedPaint
-                else -> logPaint
+            val linePaint = when (record.classification) {
+                EventClassification.RAW_PHYSICAL -> physicalPaint
+                EventClassification.INJECTED_CANDIDATE -> injectedPaint
+                EventClassification.UNKNOWN -> unknownPaint
             }
             canvas.drawText(line, logX, logY, linePaint)
             logY += 26f
         }
 
         canvas.drawText(
-            "Green=Physical | Red=Injected | Yellow=Unknown",
+            "Yellow=UNKNOWN (no reliable public SDK classifier)",
             logX, h - 30f, logHeaderPaint
         )
     }
