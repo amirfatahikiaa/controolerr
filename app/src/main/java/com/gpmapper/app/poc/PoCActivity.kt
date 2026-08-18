@@ -252,22 +252,23 @@ class PoCActivity : Activity() {
             val decorView = w?.decorView
             val focused = w?.currentFocus
             val token = decorView?.windowToken
-            val loc = IntArray(2)
-            decorView?.getLocationOnScreen(loc)
+                val loc = IntArray(2)
+                decorView?.getLocationOnScreen(loc)
+                val resumed = try { isResumed } catch (_: Exception) { false }
 
-            buildString {
-                append("focused=${focused != null}")
-                append(" focusClass=${focused?.javaClass?.simpleName}")
-                append(" lifecycle=${lifecycle.currentState.name}")
-                append(" token=${token != null}")
-                append(" visible=${decorView?.visibility == View.VISIBLE}")
-                append(" windowW=${w?.attributes?.width}")
-                append(" windowH=${w?.attributes?.height}")
-                append(" decorLoc=[${loc[0]},${loc[1]}]")
-                append(" decorSize=${decorView?.width}x${decorView?.height}")
-                append(" isFinishing=${isFinishing}")
-                append(" isDestroyed=${isDestroyed}")
-            }
+                buildString {
+                    append("focused=${focused != null}")
+                    append(" focusClass=${focused?.javaClass?.simpleName}")
+                    append(" resumed=$resumed")
+                    append(" token=${token != null}")
+                    append(" visible=${decorView?.visibility == View.VISIBLE}")
+                    append(" windowW=${w?.attributes?.width}")
+                    append(" windowH=${w?.attributes?.height}")
+                    append(" decorLoc=[${loc[0]},${loc[1]}]")
+                    append(" decorSize=${decorView?.width}x${decorView?.height}")
+                    append(" isFinishing=$isFinishing")
+                    append(" isDestroyed=$isDestroyed")
+                }
         } catch (e: Exception) {
             "error=${e.message}"
         }
