@@ -16,6 +16,7 @@ import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
+import android.view.WindowManager
 import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.ScrollView
@@ -46,6 +47,9 @@ class PoCActivity : Activity() {
 
     private var shizukuBound = false
     private var shizukuAuthorized = false
+    private var rawEventCount = 0
+    private var physicalTouchCount = 0
+    private var injectedTouchCount = 0
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -188,16 +192,85 @@ class PoCActivity : Activity() {
         testRunner = InjectionTestRunner(
             canvas = canvas,
             onResult = { result -> handler.post { onTestResult(result) } },
-            onLatencySample = { sample -> handler.post { onLatencySample(sample) } }
+            onLatencySample = { sample -> handler.post { onLatencySample(sample) } },
+            getDisplayId = { getInjectionDisplayId() },
+            getWindowInfo = { getWindowDiagnostics() },
+            getReceiverCount = { rawEventCount }
         )
 
         canvas.onTouchReceived = { record ->
+            if (record.isInjected) injectedTouchCount++ else physicalTouchCount++
             val tag = if (record.isInjected) "INJ" else "PHY"
             appendDs4Log("[$tag] P${record.pointerId} ${record.action} " +
-                    "(%.1f,%.1f) eventTime=${record.eventTimeMs}".format(record.x, record.y))
+                    "(%.1f,%.1f) dev=${record.deviceId} src=0x${Integer.toHexString(record.source)} " +
+                    "fl=0x${Integer.toHexString(record.flags)} eventTime=${record.eventTimeMs}".format(record.x, record.y))
+        }
+
+        canvas.onRawMotionEvent = { event ->
+            rawEventCount++
+            Log.d(TAG, "RAW_EVENT #$rawEventCount: action=0x${Integer.toHexString(event.actionMasked)} " +
+                    "dev=${event.deviceId} src=0x${Integer.toHexString(event.source)} " +
+                    "fl=0x${Integer.toHexString(event.getFlags())} " +
+                    "ptrs=${event.pointerCount} display=${getDisplayIdCompat(event)}")
         }
 
         initShizuku()
+    }
+
+    private fun getDisplayIdCompat(event: MotionEvent): Int {
+        return try {
+            val method = MotionEvent::class.java.getMethod("getDisplayId")
+            method.invoke(event) as? Int ?: -1
+        } catch (e: Exception) {
+            try {
+                val field = MotionEvent::class.java.getField("mDisplayId")
+                field.getInt(event)
+            } catch (e2: Exception) {
+                -1
+            }
+        }
+    }
+
+    private fun getInjectionDisplayId(): Int {
+        return try {
+            val display = display
+            val displayIdField = android.view.Display::class.java.getField("mDisplayId")
+            displayIdField.getInt(display)
+        } catch (e: Exception) {
+            try {
+                val displayIdMethod = android.view.Display::class.java.getMethod("getDisplayId")
+                displayIdMethod.invoke(display) as? Int ?: 0
+            } catch (e2: Exception) {
+                0
+            }
+        }
+    }
+
+    private fun getWindowDiagnostics(): String {
+        return try {
+            val w = window
+            val decorView = w?.decorView
+            val focused = w?.currentFocus
+            val token = decorView?.windowToken
+            val loc = IntArray(2)
+            decorView?.getLocationOnScreen(loc)
+
+            buildString {
+                append("focused=${focused != null}")
+                append(" focusClass=${focused?.javaClass?.simpleName}")
+                append(" lifecycle=${lifecycle.currentState.name}")
+                append(" token=${token != null}")
+                append(" visible=${decorView?.visibility == View.VISIBLE}")
+                append(" windowW=${w?.attributes?.width}")
+                append(" windowH=${w?.attributes?.height}")
+                append(" decorLoc=[${loc[0]},${loc[1]}]")
+                append(" decorSize=${decorView?.width}x${decorView?.height}")
+                append(" isFinishing=${isFinishing}")
+                append(" isDestroyed=${isDestroyed}")
+            }
+        } catch (e: Exception) {
+            "error=${e.message}"
+        }
     }
 
     private fun buildDeviceInfoString(): String {
@@ -206,6 +279,7 @@ class PoCActivity : Activity() {
             appendLine("Android: ${Build.VERSION.RELEASE} (API ${Build.VERSION.SDK_INT})")
             appendLine("Process UID: ${android.os.Process.myUid()}")
             appendLine("Shizuku bound: $shizukuBound | authorized: $shizukuAuthorized")
+            appendLine("Raw events received: $rawEventCount (PHY=$physicalTouchCount INJ=$injectedTouchCount)")
             append("Build: ${Build.DISPLAY}")
         }
     }
@@ -286,9 +360,16 @@ class PoCActivity : Activity() {
             return
         }
 
+        rawEventCount = 0
+        physicalTouchCount = 0
+        injectedTouchCount = 0
+
         appendLog("=== Starting Injection Tests ===")
         appendLog("Shizuku: bound=$shizukuBound authorized=$shizukuAuthorized")
         appendLog("MotionEventFactory: ${MotionEventFactory.lastResult}")
+        appendLog("Display ID: ${getInjectionDisplayId()}")
+        appendLog("Window: ${getWindowDiagnostics()}")
+        appendLog("Raw events before test: $rawEventCount")
         try {
             testRunner.runAllTests()
         } catch (e: Exception) {
@@ -305,6 +386,9 @@ class PoCActivity : Activity() {
         latencyView.text = "No latency data yet."
         canvas.clearRecords()
         latencyRecorder.clear()
+        rawEventCount = 0
+        physicalTouchCount = 0
+        injectedTouchCount = 0
         appendLog("Cleared all logs and canvas")
     }
 
@@ -320,6 +404,8 @@ class PoCActivity : Activity() {
                 appendLog("    Exception: ${step.exception.javaClass.name}: ${step.exception.message}")
             }
         }
+
+        appendLog("Receiver counters: raw=$rawEventCount phy=$physicalTouchCount inj=$injectedTouchCount")
     }
 
     private fun onLatencySample(sample: InjectionTestRunner.LatencySample) {

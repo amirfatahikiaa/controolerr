@@ -11,12 +11,17 @@ import java.util.concurrent.atomic.AtomicBoolean
 class InjectionTestRunner(
     private val canvas: VisualTouchCanvas,
     private val onResult: (TestResult) -> Unit,
-    private val onLatencySample: (LatencySample) -> Unit
+    private val onLatencySample: (LatencySample) -> Unit,
+    private val getDisplayId: () -> Int = { 0 },
+    private val getWindowInfo: () -> String = { "unknown" },
+    private val getReceiverCount: () -> Int = { 0 }
 ) {
 
     companion object {
         private const val TAG = "InjectionTestRunner"
         private const val INJECT_DELAY_MS = 80L
+        private const val INJECT_INPUT_EVENT_MODE_ASYNC = 0
+        private const val INJECT_INPUT_EVENT_MODE_WAIT_FOR_FINISH = 1
     }
 
     data class TestResult(
@@ -81,23 +86,30 @@ class InjectionTestRunner(
                 iInputManager = acquireResult.iInputManager
                 injectMethod = acquireResult.injectMethod
 
+                val windowInfo = getWindowInfo()
+                val displayId = getDisplayId()
+                val receiverCount = getReceiverCount()
+
                 val binderStep = StepResult(
-                    name = "Binder Acquisition",
+                    name = "Stage A: Binder Acquisition",
                     success = acquireResult.success,
-                    stage = "BINDER_ACQUIRE",
+                    stage = "A_BINDER",
                     details = buildString {
                         append("Raw: ${acquireResult.binder != null}")
                         append(" | Wrapped: ${acquireResult.wrappedBinder != null}")
                         append(" | IInputManager: ${acquireResult.iInputManager != null}")
-                        append(" | IInputManager class: ${acquireResult.iInputManager?.javaClass?.name}")
+                        append(" | proxyClass: ${acquireResult.iInputManager?.javaClass?.name}")
                         append(" | injectMethod: ${acquireResult.injectMethod != null}")
+                        append(" | displayId=$displayId")
+                        append(" | window=$windowInfo")
+                        append(" | receivers=$receiverCount")
                         if (!acquireResult.success) append(" | ERROR: ${acquireResult.error}")
                     }
                 )
 
                 if (!acquireResult.success) {
                     val result = TestResult(
-                        testName = "Binder Acquisition",
+                        testName = "Stage A: Binder Acquisition",
                         timestamp = System.currentTimeMillis(),
                         steps = listOf(binderStep),
                         overallSuccess = false,
@@ -109,14 +121,14 @@ class InjectionTestRunner(
                 }
 
                 onResult(TestResult(
-                    testName = "Binder Acquisition",
+                    testName = "Stage A: Binder Acquisition",
                     timestamp = System.currentTimeMillis(),
                     steps = listOf(binderStep),
                     overallSuccess = true,
                     classification = Classification.UNVERIFIED
                 ))
 
-                Log.i(TAG, "Binder acquired. IInputManager=${iInputManager?.javaClass?.name}")
+                Log.i(TAG, "Binder acquired. Running tap test...")
                 Thread.sleep(500)
                 runTapTest()
 
@@ -152,21 +164,31 @@ class InjectionTestRunner(
         }.start()
     }
 
-    private fun injectEvent(event: MotionEvent): IInputManagerBinderHelper.InjectionResult {
+    private fun injectEvent(
+        event: MotionEvent,
+        mode: Int = INJECT_INPUT_EVENT_MODE_ASYNC
+    ): IInputManagerBinderHelper.InjectionResult {
         val mgr = iInputManager
         val method = injectMethod
         if (mgr == null || method == null) {
             return IInputManagerBinderHelper.InjectionResult(
-                "NO_PROXY", false, 0, null,
+                "A_NO_PROXY", false, 0, null,
                 "IInputManager proxy not available (mgr=$mgr, method=$method)"
             )
         }
-        return binderHelper.injectViaProxy(mgr, method, event)
+
+        Log.i(TAG, "injectEvent: mode=$mode " +
+                "(0=ASYNC, 1=WAIT_FOR_FINISH)")
+        Log.i(TAG, MotionEventFactory.diagnoseEvent(event, "PRE-INJECT"))
+
+        return binderHelper.injectViaProxy(mgr, method, event, mode)
     }
 
     private fun runTapTest() {
         val testStart = System.currentTimeMillis()
         val steps = mutableListOf<StepResult>()
+
+        val receiverBefore = getReceiverCount()
 
         val downTime = SystemClock.uptimeMillis()
         val createTs = System.nanoTime()
@@ -175,16 +197,23 @@ class InjectionTestRunner(
             downTime, downTime, 0
         )
 
-        steps.add(StepResult("Create DOWN event", true, "CREATE", "action=0x${Integer.toHexString(downEvent.actionMasked)}"))
+        steps.add(StepResult(
+            "Stage B: Create DOWN event",
+            true, "B_CREATE",
+            MotionEventFactory.diagnoseEvent(downEvent, "DOWN").trim()
+        ))
 
         val injectTs = System.nanoTime()
-        val downResult = injectEvent(downEvent)
+        val downResult = injectEvent(downEvent, INJECT_INPUT_EVENT_MODE_ASYNC)
 
         steps.add(StepResult(
-            "Inject DOWN via IInputManager proxy",
+            "Stage C: injectInputEvent returned",
             downResult.success,
-            downResult.stage,
-            downResult.errorMessage ?: "returned ${downResult.success}",
+            "C_INJECT",
+            "mode=ASYNC(0) returned=${downResult.success} " +
+                    "stage=${downResult.stage} " +
+                    "binderReturnNs=${downResult.binderReturnTimestampNs} " +
+                    (downResult.errorMessage ?: ""),
             downResult.exception
         ))
 
@@ -195,30 +224,37 @@ class InjectionTestRunner(
             downTime, downTime + INJECT_DELAY_MS, 0
         )
 
-        val upResult = injectEvent(upEvent)
+        val upResult = injectEvent(upEvent, INJECT_INPUT_EVENT_MODE_ASYNC)
 
         steps.add(StepResult(
-            "Inject UP via IInputManager proxy",
+            "Stage C: inject UP returned",
             upResult.success,
-            upResult.stage,
-            upResult.errorMessage ?: "returned ${upResult.success}",
+            "C_INJECT_UP",
+            "returned=${upResult.success}",
             upResult.exception
         ))
 
-        val receiverEvents = canvas.getRecords().filter {
-            it.wallClockMs >= testStart && it.isInjected
-        }
+        Thread.sleep(200)
 
-        val receiverStep = StepResult(
-            "Receiver-side verification",
-            receiverEvents.isNotEmpty(),
-            "RECEIVE_CHECK",
-            "Received ${receiverEvents.size} injected events on canvas"
-        )
-        steps.add(receiverStep)
+        val receiverAfter = getReceiverCount()
+        val receiverEvents = canvas.getRecords().filter {
+            it.wallClockMs >= testStart
+        }
+        val injectedOnCanvas = receiverEvents.filter { it.isInjected }
+        val anyOnCanvas = receiverEvents
+
+        steps.add(StepResult(
+            "Stage D: Framework/receiver observation",
+            anyOnCanvas.isNotEmpty(),
+            "D_RECEIVE",
+            "totalReceived=${anyOnCanvas.size} " +
+                    "injectedTagged=${injectedOnCanvas.size} " +
+                    "receiversBefore=$receiverBefore after=$receiverAfter " +
+                    "canvasRecords=${canvas.getRecords().size}"
+        ))
 
         val allSuccess = steps.all { it.success }
-        val receiverGotEvents = receiverEvents.isNotEmpty()
+        val receiverGotEvents = anyOnCanvas.isNotEmpty()
 
         val classification = when {
             allSuccess && receiverGotEvents -> Classification.VERIFIED
@@ -229,15 +265,15 @@ class InjectionTestRunner(
             else -> Classification.FAILED
         }
 
-        if (downResult.success && receiverEvents.isNotEmpty()) {
+        if (downResult.success && anyOnCanvas.isNotEmpty()) {
             val sample = LatencySample(
                 testName = "tap",
                 createdNs = createTs,
                 injectInvokeNs = injectTs,
                 injectReturnNs = downResult.binderReturnTimestampNs,
-                receiverTimestampNs = receiverEvents.first().timestampNs,
+                receiverTimestampNs = anyOnCanvas.first().timestampNs,
                 binderReturnUs = (downResult.binderReturnTimestampNs - injectTs) / 1000f,
-                e2eUs = (receiverEvents.first().timestampNs - createTs) / 1000f
+                e2eUs = (anyOnCanvas.first().timestampNs - createTs) / 1000f
             )
             onLatencySample(sample)
         }
@@ -266,7 +302,10 @@ class InjectionTestRunner(
             durationMs = 50, stepCount = 5
         )
 
-        steps.add(StepResult("Create swipe events", true, "CREATE", "${events.size} events created"))
+        steps.add(StepResult(
+            "Create swipe events",
+            true, "CREATE", "${events.size} events created"
+        ))
 
         var allInjected = true
         val firstResult: IInputManagerBinderHelper.InjectionResult?
@@ -276,14 +315,13 @@ class InjectionTestRunner(
         val injectTs = System.nanoTime()
 
         if (events.isNotEmpty()) {
-            val firstEvent = events[0]
-            val result = injectEvent(firstEvent)
+            val result = injectEvent(events[0], INJECT_INPUT_EVENT_MODE_ASYNC)
             firstResult = result
             if (!result.success) allInjected = false
 
             for (i in 1 until events.size) {
                 Thread.sleep(INJECT_DELAY_MS / events.size)
-                val moveResult = injectEvent(events[i])
+                val moveResult = injectEvent(events[i], INJECT_INPUT_EVENT_MODE_ASYNC)
                 if (!moveResult.success) allInjected = false
                 lastResult = moveResult
             }
@@ -301,14 +339,14 @@ class InjectionTestRunner(
         Thread.sleep(200)
 
         val receiverEvents = canvas.getRecords().filter {
-            it.wallClockMs >= testStart && it.isInjected
+            it.wallClockMs >= testStart
         }
 
         steps.add(StepResult(
             "Receiver-side verification",
             receiverEvents.isNotEmpty(),
             "RECEIVE_CHECK",
-            "Received ${receiverEvents.size} injected events"
+            "Received ${receiverEvents.size} events (${receiverEvents.count { it.isInjected }} tagged INJ)"
         ))
 
         val allSuccess = steps.all { it.success }
@@ -358,7 +396,10 @@ class InjectionTestRunner(
             durationMs = 50
         )
 
-        steps.add(StepResult("Create two-pointer events", true, "CREATE", "${events.size} events"))
+        steps.add(StepResult(
+            "Create two-pointer events",
+            true, "CREATE", "${events.size} events"
+        ))
 
         var allInjected = true
         val firstResult: IInputManagerBinderHelper.InjectionResult?
@@ -366,14 +407,13 @@ class InjectionTestRunner(
         val injectTs = System.nanoTime()
 
         if (events.isNotEmpty()) {
-            val firstEvent = events[0]
-            val result = injectEvent(firstEvent)
+            val result = injectEvent(events[0], INJECT_INPUT_EVENT_MODE_ASYNC)
             firstResult = result
             if (!result.success) allInjected = false
 
             for (i in 1 until events.size) {
                 Thread.sleep(INJECT_DELAY_MS / events.size)
-                val r = injectEvent(events[i])
+                val r = injectEvent(events[i], INJECT_INPUT_EVENT_MODE_ASYNC)
                 if (!r.success) allInjected = false
             }
         } else {
@@ -390,14 +430,14 @@ class InjectionTestRunner(
         Thread.sleep(200)
 
         val receiverEvents = canvas.getRecords().filter {
-            it.wallClockMs >= testStart && it.isInjected
+            it.wallClockMs >= testStart
         }
 
         steps.add(StepResult(
             "Receiver-side verification",
             receiverEvents.isNotEmpty(),
             "RECEIVE_CHECK",
-            "Received ${receiverEvents.size} injected events"
+            "Received ${receiverEvents.size} events (${receiverEvents.count { it.isInjected }} tagged INJ)"
         ))
 
         val allSuccess = steps.all { it.success }

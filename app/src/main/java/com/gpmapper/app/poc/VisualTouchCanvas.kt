@@ -4,6 +4,7 @@ import android.annotation.SuppressLint
 import android.content.Context
 import android.graphics.*
 import android.util.AttributeSet
+import android.util.Log
 import android.view.MotionEvent
 import android.view.View
 import java.text.SimpleDateFormat
@@ -23,12 +24,20 @@ class VisualTouchCanvas @JvmOverloads constructor(
         val timestampNs: Long,
         val wallClockMs: Long,
         val isInjected: Boolean,
-        val eventTimeMs: Long
+        val eventTimeMs: Long,
+        val deviceId: Int,
+        val source: Int,
+        val flags: Int,
+        val pointerCount: Int,
+        val actionMasked: Int,
+        val downTime: Long
     )
 
     private val records = CopyOnWriteArrayList<TouchRecord>()
     private val maxRecords = 200
     private val dateFormat = SimpleDateFormat("HH:mm:ss.SSS", Locale.US)
+
+    private val FLAG_INJECTED = 0x01000000
 
     private val physicalPaint = Paint().apply {
         color = Color.parseColor("#4CAF50")
@@ -44,6 +53,13 @@ class VisualTouchCanvas @JvmOverloads constructor(
         isAntiAlias = true
     }
 
+    private val unknownPaint = Paint().apply {
+        color = Color.parseColor("#FFEB3B")
+        strokeWidth = 8f
+        style = Paint.Style.STROKE
+        isAntiAlias = true
+    }
+
     private val physicalFillPaint = Paint().apply {
         color = Color.parseColor("#4CAF50")
         style = Paint.Style.FILL
@@ -52,6 +68,12 @@ class VisualTouchCanvas @JvmOverloads constructor(
 
     private val injectedFillPaint = Paint().apply {
         color = Color.parseColor("#FF5722")
+        style = Paint.Style.FILL
+        isAntiAlias = true
+    }
+
+    private val unknownFillPaint = Paint().apply {
+        color = Color.parseColor("#FFEB3B")
         style = Paint.Style.FILL
         isAntiAlias = true
     }
@@ -85,9 +107,17 @@ class VisualTouchCanvas @JvmOverloads constructor(
     private val trails = mutableMapOf<Int, MutableList<PointF>>()
 
     var onTouchReceived: ((TouchRecord) -> Unit)? = null
+    var onRawMotionEvent: ((MotionEvent) -> Unit)? = null
 
     @SuppressLint("ClickableViewAccessibility")
     override fun onTouchEvent(event: MotionEvent): Boolean {
+        Log.d(TAG, "onTouchEvent: action=0x${Integer.toHexString(event.actionMasked)} " +
+                "deviceId=${event.deviceId} source=0x${Integer.toHexString(event.source)} " +
+                "flags=0x${Integer.toHexString(event.getFlags())} " +
+                "ptrCount=${event.pointerCount}")
+
+        onRawMotionEvent?.invoke(event)
+
         val actionType = when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> "DOWN"
             MotionEvent.ACTION_POINTER_DOWN -> "PDOWN"
@@ -112,7 +142,9 @@ class VisualTouchCanvas @JvmOverloads constructor(
         val y = event.getY(pointerIndex.coerceIn(0, event.pointerCount - 1))
         val pressure = event.getPressure(pointerIndex.coerceIn(0, event.pointerCount - 1))
 
-        val isInjected = event.deviceId == 0
+        val hasInjectedFlag = (event.getFlags() and FLAG_INJECTED) != 0
+        val deviceIdIsZero = event.deviceId == 0
+        val isInjected = hasInjectedFlag || deviceIdIsZero
 
         val record = TouchRecord(
             pointerId = pointerId,
@@ -123,7 +155,13 @@ class VisualTouchCanvas @JvmOverloads constructor(
             timestampNs = event.eventTimeNanos,
             wallClockMs = System.currentTimeMillis(),
             isInjected = isInjected,
-            eventTimeMs = event.eventTime
+            eventTimeMs = event.eventTime,
+            deviceId = event.deviceId,
+            source = event.source,
+            flags = event.getFlags(),
+            pointerCount = event.pointerCount,
+            actionMasked = event.actionMasked,
+            downTime = event.downTime
         )
 
         synchronized(records) {
@@ -190,15 +228,27 @@ class VisualTouchCanvas @JvmOverloads constructor(
 
         for ((pointerId, trail) in trails) {
             if (trail.size < 2) continue
-            val paint = if (pointerId >= 100) injectedPaint else physicalPaint
+            val paint = when {
+                pointerId >= 100 -> injectedPaint
+                pointerId < 0 -> unknownPaint
+                else -> physicalPaint
+            }
             for (i in 1 until trail.size) {
                 canvas.drawLine(trail[i - 1].x, trail[i - 1].y, trail[i].x, trail[i].y, paint)
             }
         }
 
         for ((pointerId, point) in activePointers) {
-            val fillPaint = if (pointerId >= 100) injectedFillPaint else physicalFillPaint
-            val strokePaint = if (pointerId >= 100) injectedPaint else physicalPaint
+            val fillPaint = when {
+                pointerId >= 100 -> injectedFillPaint
+                pointerId < 0 -> unknownFillPaint
+                else -> physicalFillPaint
+            }
+            val strokePaint = when {
+                pointerId >= 100 -> injectedPaint
+                pointerId < 0 -> unknownPaint
+                else -> physicalPaint
+            }
             canvas.drawCircle(point.x, point.y, 20f, fillPaint)
             canvas.drawCircle(point.x, point.y, 20f, strokePaint)
             canvas.drawText("P$pointerId", point.x + 25f, point.y - 10f, textPaint)
@@ -215,17 +265,25 @@ class VisualTouchCanvas @JvmOverloads constructor(
 
         for (record in recentRecords) {
             val timeStr = dateFormat.format(Date(record.wallClockMs))
-            val injectTag = if (record.isInjected) "[INJ]" else "[PHYS]"
+            val injectTag = if (record.isInjected) "[INJ]" else "[PHY]"
             val line = "$timeStr $injectTag P${record.pointerId} ${record.action} " +
-                    "(%.1f, %.1f) p=%.2f".format(record.x, record.y, record.pressure)
-            val linePaint = if (record.isInjected) injectedPaint else logPaint
+                    "(%.1f, %.1f) dev=${record.deviceId} src=0x${Integer.toHexString(record.source)} " +
+                    "fl=0x${Integer.toHexString(record.flags)}".format(record.x, record.y)
+            val linePaint = when {
+                record.isInjected -> injectedPaint
+                else -> logPaint
+            }
             canvas.drawText(line, logX, logY, linePaint)
             logY += 26f
         }
 
         canvas.drawText(
-            "Green = Physical touch | Red = Injected touch",
+            "Green=Physical | Red=Injected | Yellow=Unknown",
             logX, h - 30f, logHeaderPaint
         )
+    }
+
+    companion object {
+        private const val TAG = "VisualTouchCanvas"
     }
 }
