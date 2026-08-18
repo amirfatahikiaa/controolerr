@@ -1,8 +1,29 @@
 package com.gpmapper.app.poc;
 
 import android.view.MotionEvent;
+import java.lang.reflect.Method;
 
 public class MotionEventFactory {
+
+    private static Method sObtainMethod;
+
+    static {
+        try {
+            for (Method m : MotionEvent.class.getDeclaredMethods()) {
+                if ("obtain".equals(m.getName())
+                        && java.lang.reflect.Modifier.isStatic(m.modifiers())) {
+                    Class<?>[] params = m.getParameterTypes();
+                    if (params.length == 14) {
+                        sObtainMethod = m;
+                        sObtainMethod.setAccessible(true);
+                        break;
+                    }
+                }
+            }
+        } catch (Exception e) {
+            // Will be reported at runtime
+        }
+    }
 
     @SuppressWarnings("deprecation")
     public static MotionEvent create(
@@ -15,8 +36,11 @@ public class MotionEventFactory {
             float pressure,
             float size,
             int source
-    ) {
-        return MotionEvent.obtain(
+    ) throws Exception {
+        if (sObtainMethod == null) {
+            throw new IllegalStateException("MotionEvent.obtain not found via reflection");
+        }
+        return (MotionEvent) sObtainMethod.invoke(null,
                 downTime,
                 eventTime,
                 action,
