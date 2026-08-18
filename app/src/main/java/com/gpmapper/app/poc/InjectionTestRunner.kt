@@ -5,7 +5,6 @@ import android.os.Looper
 import android.os.SystemClock
 import android.util.Log
 import android.view.MotionEvent
-import rikka.shizuku.Shizuku
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.atomic.AtomicBoolean
 
@@ -56,11 +55,11 @@ class InjectionTestRunner(
 
     private val handler = Handler(Looper.getMainLooper())
     private val running = AtomicBoolean(false)
-    private val mainLooper = Looper.getMainLooper()
     private val results = CopyOnWriteArrayList<TestResult>()
     private var binderHelper = IInputManagerBinderHelper
-    private var wrappedBinder: android.os.IBinder? = null
-    private var rawBinder: android.os.IBinder? = null
+
+    private var iInputManager: Any? = null
+    private var injectMethod: java.lang.reflect.Method? = null
 
     fun isRunning(): Boolean = running.get()
 
@@ -79,15 +78,21 @@ class InjectionTestRunner(
                 Log.i(TAG, "=== Starting Injection Test Sequence ===")
 
                 val acquireResult = binderHelper.acquireInputManagerBinder()
-                rawBinder = acquireResult.binder
-                wrappedBinder = acquireResult.wrappedBinder
+                iInputManager = acquireResult.iInputManager
+                injectMethod = acquireResult.injectMethod
 
                 val binderStep = StepResult(
                     name = "Binder Acquisition",
                     success = acquireResult.success,
                     stage = "BINDER_ACQUIRE",
-                    details = acquireResult.error ?: "Raw binder: ${acquireResult.binder != null}, " +
-                            "Wrapped: ${acquireResult.wrappedBinder != null}"
+                    details = buildString {
+                        append("Raw: ${acquireResult.binder != null}")
+                        append(" | Wrapped: ${acquireResult.wrappedBinder != null}")
+                        append(" | IInputManager: ${acquireResult.iInputManager != null}")
+                        append(" | IInputManager class: ${acquireResult.iInputManager?.javaClass?.name}")
+                        append(" | injectMethod: ${acquireResult.injectMethod != null}")
+                        if (!acquireResult.success) append(" | ERROR: ${acquireResult.error}")
+                    }
                 )
 
                 if (!acquireResult.success) {
@@ -111,7 +116,7 @@ class InjectionTestRunner(
                     classification = Classification.UNVERIFIED
                 ))
 
-                Log.i(TAG, "Binder acquired. Running tap test...")
+                Log.i(TAG, "Binder acquired. IInputManager=${iInputManager?.javaClass?.name}")
                 Thread.sleep(500)
                 runTapTest()
 
@@ -147,6 +152,18 @@ class InjectionTestRunner(
         }.start()
     }
 
+    private fun injectEvent(event: MotionEvent): IInputManagerBinderHelper.InjectionResult {
+        val mgr = iInputManager
+        val method = injectMethod
+        if (mgr == null || method == null) {
+            return IInputManagerBinderHelper.InjectionResult(
+                "NO_PROXY", false, 0, null,
+                "IInputManager proxy not available (mgr=$mgr, method=$method)"
+            )
+        }
+        return binderHelper.injectViaProxy(mgr, method, event)
+    }
+
     private fun runTapTest() {
         val testStart = System.currentTimeMillis()
         val steps = mutableListOf<StepResult>()
@@ -161,14 +178,10 @@ class InjectionTestRunner(
         steps.add(StepResult("Create DOWN event", true, "CREATE", "action=0x${Integer.toHexString(downEvent.actionMasked)}"))
 
         val injectTs = System.nanoTime()
-        val downResult = wrappedBinder?.let { binder ->
-            binderHelper.injectViaWrappedBinder(binder, downEvent)
-        } ?: IInputManagerBinderHelper.InjectionResult(
-            "NO_BINDER", false, 0, null, "No wrapped binder available"
-        )
+        val downResult = injectEvent(downEvent)
 
         steps.add(StepResult(
-            "Inject DOWN via wrapped binder",
+            "Inject DOWN via IInputManager proxy",
             downResult.success,
             downResult.stage,
             downResult.errorMessage ?: "returned ${downResult.success}",
@@ -182,14 +195,10 @@ class InjectionTestRunner(
             downTime, downTime + INJECT_DELAY_MS, 0
         )
 
-        val upResult = wrappedBinder?.let { binder ->
-            binderHelper.injectViaWrappedBinder(binder, upEvent)
-        } ?: IInputManagerBinderHelper.InjectionResult(
-            "NO_BINDER", false, 0, null, "No wrapped binder available"
-        )
+        val upResult = injectEvent(upEvent)
 
         steps.add(StepResult(
-            "Inject UP via wrapped binder",
+            "Inject UP via IInputManager proxy",
             upResult.success,
             upResult.stage,
             upResult.errorMessage ?: "returned ${upResult.success}",
@@ -268,21 +277,13 @@ class InjectionTestRunner(
 
         if (events.isNotEmpty()) {
             val firstEvent = events[0]
-            val result = wrappedBinder?.let { binder ->
-                binderHelper.injectViaWrappedBinder(binder, firstEvent)
-            } ?: IInputManagerBinderHelper.InjectionResult(
-                "NO_BINDER", false, 0, null, "No wrapped binder"
-            )
+            val result = injectEvent(firstEvent)
             firstResult = result
             if (!result.success) allInjected = false
 
             for (i in 1 until events.size) {
                 Thread.sleep(INJECT_DELAY_MS / events.size)
-                val moveResult = wrappedBinder?.let { binder ->
-                    binderHelper.injectViaWrappedBinder(binder, events[i])
-                } ?: IInputManagerBinderHelper.InjectionResult(
-                    "NO_BINDER", false, 0, null, "No wrapped binder"
-                )
+                val moveResult = injectEvent(events[i])
                 if (!moveResult.success) allInjected = false
                 lastResult = moveResult
             }
@@ -366,21 +367,13 @@ class InjectionTestRunner(
 
         if (events.isNotEmpty()) {
             val firstEvent = events[0]
-            val result = wrappedBinder?.let { binder ->
-                binderHelper.injectViaWrappedBinder(binder, firstEvent)
-            } ?: IInputManagerBinderHelper.InjectionResult(
-                "NO_BINDER", false, 0, null, "No wrapped binder"
-            )
+            val result = injectEvent(firstEvent)
             firstResult = result
             if (!result.success) allInjected = false
 
             for (i in 1 until events.size) {
                 Thread.sleep(INJECT_DELAY_MS / events.size)
-                val r = wrappedBinder?.let { binder ->
-                    binderHelper.injectViaWrappedBinder(binder, events[i])
-                } ?: IInputManagerBinderHelper.InjectionResult(
-                    "NO_BINDER", false, 0, null, "No wrapped binder"
-                )
+                val r = injectEvent(events[i])
                 if (!r.success) allInjected = false
             }
         } else {

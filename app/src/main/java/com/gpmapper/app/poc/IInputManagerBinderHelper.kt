@@ -2,7 +2,6 @@ package com.gpmapper.app.poc
 
 import android.annotation.SuppressLint
 import android.os.IBinder
-import android.os.Parcel
 import android.os.SystemClock
 import android.util.Log
 import rikka.shizuku.Shizuku
@@ -16,12 +15,12 @@ object IInputManagerBinderHelper {
     private const val INJECT_INPUT_EVENT_MODE_ASYNC = 0
     private const val INJECT_INPUT_EVENT_MODE_WAIT_FOR_FINISH = 1
 
-    private const val FIRST_CALL_TRANSACTION = 1
-
     data class BinderAcquisitionResult(
         val success: Boolean,
         val binder: IBinder?,
         val wrappedBinder: IBinder?,
+        val iInputManager: Any?,
+        val injectMethod: java.lang.reflect.Method?,
         val error: String?
     )
 
@@ -35,67 +34,64 @@ object IInputManagerBinderHelper {
 
     @SuppressLint("PrivateApi", "DiscouragedPrivateApi")
     fun acquireInputManagerBinder(): BinderAcquisitionResult {
-        return try {
+        try {
+            // 1. Get raw IInputManager binder via ServiceManager
             val smClass = Class.forName("android.os.ServiceManager")
             val getServiceMethod = smClass.getDeclaredMethod("getService", String::class.java)
-            val binder = getServiceMethod.invoke(null, SERVICE_NAME) as? IBinder
+            val rawBinder = getServiceMethod.invoke(null, SERVICE_NAME) as? IBinder
 
-            if (binder == null) {
+            if (rawBinder == null) {
                 return BinderAcquisitionResult(
                     success = false, binder = null, wrappedBinder = null,
+                    iInputManager = null, injectMethod = null,
                     error = "ServiceManager.getService('input') returned null"
                 )
             }
+            Log.i(TAG, "Raw binder: ${rawBinder.javaClass.name} alive=${rawBinder.isBinderAlive}")
 
-            Log.i(TAG, "Acquired raw IInputManager binder: ${binder.javaClass.name}")
-            Log.i(TAG, "Binder alive: ${binder.isBinderAlive}")
+            // 2. Wrap with ShizukuBinderWrapper so calls go through Shizuku's privileged process
+            val wrappedBinder = ShizukuBinderWrapper(rawBinder)
+            Log.i(TAG, "ShizukuBinderWrapper: ${wrappedBinder.javaClass.name}")
 
-            val wrappedBinder = ShizukuBinderWrapper(binder)
-            Log.i(TAG, "Wrapped binder obtained: ${wrappedBinder?.javaClass?.name}")
+            // 3. Resolve IInputManager.Stub.asInterface to get the AIDL proxy
+            val stubClass = Class.forName("android.hardware.input.IInputManager\$Stub")
+            val asInterfaceMethod = stubClass.getDeclaredMethod("asInterface", IBinder::class.java)
+            val iInputManager = asInterfaceMethod.invoke(null, wrappedBinder)
+            Log.i(TAG, "IInputManager proxy: ${iInputManager?.javaClass?.name}")
 
-            BinderAcquisitionResult(
-                success = true,
-                binder = binder,
-                wrappedBinder = wrappedBinder,
-                error = null
-            )
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to acquire IInputManager binder", e)
-            BinderAcquisitionResult(
-                success = false, binder = null, wrappedBinder = null,
-                error = "${e.javaClass.simpleName}: ${e.message}"
-            )
-        }
-    }
+            if (iInputManager == null) {
+                return BinderAcquisitionResult(
+                    success = false, binder = rawBinder, wrappedBinder = wrappedBinder,
+                    iInputManager = null, injectMethod = null,
+                    error = "IInputManager.Stub.asInterface returned null"
+                )
+            }
 
-    @SuppressLint("PrivateApi")
-    fun getInjectInputEventMethod(): java.lang.reflect.Method? {
-        return try {
-            val imStubClass = Class.forName("android.hardware.input.IInputManager\$Stub")
-            val method = imStubClass.getDeclaredMethod(
+            // 4. Resolve injectInputEvent method on the IInputManager interface
+            val iInputManagerClass = Class.forName("android.hardware.input.IInputManager")
+            val injectMethod = iInputManagerClass.getDeclaredMethod(
                 "injectInputEvent",
                 android.view.InputEvent::class.java,
                 Int::class.javaPrimitiveType
             )
-            method.isAccessible = true
-            Log.i(TAG, "Found injectInputEvent method: ${method}")
-            method
+            injectMethod.isAccessible = true
+            Log.i(TAG, "injectInputEvent method: $injectMethod")
+
+            return BinderAcquisitionResult(
+                success = true,
+                binder = rawBinder,
+                wrappedBinder = wrappedBinder,
+                iInputManager = iInputManager,
+                injectMethod = injectMethod,
+                error = null
+            )
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to get injectInputEvent method via Stub", e)
-            try {
-                val imClass = Class.forName("android.hardware.input.InputManager")
-                val method = imClass.getDeclaredMethod(
-                    "injectInputEvent",
-                    android.view.InputEvent::class.java,
-                    Int::class.javaPrimitiveType
-                )
-                method.isAccessible = true
-                Log.i(TAG, "Found injectInputEvent via InputManager class: ${method}")
-                method
-            } catch (e2: Exception) {
-                Log.e(TAG, "Failed to get injectInputEvent via InputManager class", e2)
-                null
-            }
+            Log.e(TAG, "Failed to acquire IInputManager binder", e)
+            return BinderAcquisitionResult(
+                success = false, binder = null, wrappedBinder = null,
+                iInputManager = null, injectMethod = null,
+                error = "${e.javaClass.simpleName}: ${e.message}"
+            )
         }
     }
 
@@ -104,24 +100,28 @@ object IInputManagerBinderHelper {
         event: android.view.InputEvent,
         mode: Int = INJECT_INPUT_EVENT_MODE_ASYNC
     ): InjectionResult {
-        val createTs = System.nanoTime()
+        return InjectionResult(
+            stage = "DEPRECATED",
+            success = false,
+            binderReturnTimestampNs = 0,
+            exception = null,
+            errorMessage = "injectViaWrappedBinder is deprecated. Use injectViaProxy."
+        )
+    }
 
+    fun injectViaProxy(
+        iInputManager: Any,
+        injectMethod: java.lang.reflect.Method,
+        event: android.view.InputEvent,
+        mode: Int = INJECT_INPUT_EVENT_MODE_ASYNC
+    ): InjectionResult {
         return try {
-            val method = getInjectInputEventMethod()
-                ?: return InjectionResult(
-                    stage = "METHOD_LOOKUP",
-                    success = false,
-                    binderReturnTimestampNs = 0,
-                    exception = null,
-                    errorMessage = "Could not find injectInputEvent method"
-                )
-
-            Log.i(TAG, "Invoking injectInputEvent via wrapped binder...")
-            Log.i(TAG, "Event class: ${event.javaClass.name}")
+            Log.i(TAG, "Invoking injectInputEvent on IInputManager proxy...")
+            Log.i(TAG, "Proxy class: ${iInputManager.javaClass.name}")
             Log.i(TAG, "Event: deviceId=${event.getDeviceId()} eventTime=${event.getEventTime()}")
 
             val invokeTs = System.nanoTime()
-            val result = method.invoke(wrappedBinder, event, mode)
+            val result = injectMethod.invoke(iInputManager, event, mode)
             val returnTs = System.nanoTime()
 
             val success = result as? Boolean ?: false
@@ -148,56 +148,6 @@ object IInputManagerBinderHelper {
             Log.e(TAG, "injectInputEvent failed: ${e.javaClass.name}: ${e.message}", e)
             InjectionResult(
                 stage = "INVOKE_EXCEPTION",
-                success = false,
-                binderReturnTimestampNs = System.nanoTime(),
-                exception = e,
-                errorMessage = "${e.javaClass.name}: ${e.message}"
-            )
-        }
-    }
-
-    fun injectViaRawParcel(
-        binder: IBinder,
-        event: android.view.InputEvent,
-        mode: Int = INJECT_INPUT_EVENT_MODE_ASYNC
-    ): InjectionResult {
-        val createTs = System.nanoTime()
-
-        return try {
-            val data = Parcel.obtain()
-            val reply = Parcel.obtain()
-
-            try {
-                data.writeInterfaceToken("android.hardware.input.IInputManager")
-                data.writeStrongBinder(android.os.Binder()) // caller identity
-                event.writeToParcel(data, 0)
-                data.writeInt(mode)
-
-                val invokeTs = System.nanoTime()
-                val transactResult = binder.transact(FIRST_CALL_TRANSACTION, data, reply, 0)
-                val returnTs = System.nanoTime()
-
-                reply.readException()
-                val success = reply.readInt() != 0
-
-                Log.i(TAG, "Raw parcel transact: success=$success transactResult=$transactResult " +
-                        "took ${returnTs - invokeTs}ns")
-
-                InjectionResult(
-                    stage = "RAW_PARCEL",
-                    success = success && transactResult,
-                    binderReturnTimestampNs = returnTs,
-                    exception = null,
-                    errorMessage = if (!success) "Parcel returned false" else null
-                )
-            } finally {
-                data.recycle()
-                reply.recycle()
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "Raw parcel injection failed: ${e.javaClass.name}: ${e.message}", e)
-            InjectionResult(
-                stage = "RAW_PARCEL_EXCEPTION",
                 success = false,
                 binderReturnTimestampNs = System.nanoTime(),
                 exception = e,
