@@ -28,7 +28,7 @@ class VisualTouchCanvas @JvmOverloads constructor(
 
     private val records = CopyOnWriteArrayList<TouchRecord>()
     private val maxRecords = 200
-    private valdateFormat = SimpleDateFormat("HH:mm:ss.SSS", Locale.US)
+    private val dateFormat = SimpleDateFormat("HH:mm:ss.SSS", Locale.US)
 
     private val physicalPaint = Paint().apply {
         color = Color.parseColor("#4CAF50")
@@ -112,8 +112,7 @@ class VisualTouchCanvas @JvmOverloads constructor(
         val y = event.getY(pointerIndex.coerceIn(0, event.pointerCount - 1))
         val pressure = event.getPressure(pointerIndex.coerceIn(0, event.pointerCount - 1))
 
-        val isInjected = (event.flags and MotionEvent.FLAG_SOURCE_UNKNOWN) != 0 ||
-                event.deviceId == 0
+        val isInjected = event.deviceId == 0
 
         val record = TouchRecord(
             pointerId = pointerId,

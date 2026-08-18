@@ -4,7 +4,7 @@ import android.app.Application
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.util.Log
-import dev.rikka.shizuku.Shizuku
+import rikka.shizuku.Shizuku
 
 class GPMapperApp : Application() {
 

@@ -44,7 +44,7 @@ class TouchInjector(private val backend: InjectionBackend) {
     }
 
     private suspend fun processQueue() {
-        while (running.get() && isActive) {
+        while (running.get() && coroutineContext.isActive) {
             val action = eventQueue.poll()
             if (action != null) {
                 executeAction(action)

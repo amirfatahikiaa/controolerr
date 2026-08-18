@@ -9,7 +9,6 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
-import android.os.SystemProperties
 import android.util.Log
 import android.view.Gravity
 import android.view.InputDevice
@@ -21,7 +20,7 @@ import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
-import dev.rikka.shizuku.Shizuku
+import rikka.shizuku.Shizuku
 import java.text.SimpleDateFormat
 import java.util.*
 

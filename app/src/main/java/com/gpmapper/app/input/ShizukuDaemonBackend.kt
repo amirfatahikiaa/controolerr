@@ -2,7 +2,7 @@ package com.gpmapper.app.input
 
 import android.content.Context
 import android.util.Log
-import dev.rikka.shizuku.Shizuku
+import rikka.shizuku.Shizuku
 
 class ShizukuDaemonBackend : InjectionBackend {
 

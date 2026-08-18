@@ -5,8 +5,8 @@ import android.os.IBinder
 import android.os.Parcel
 import android.os.SystemClock
 import android.util.Log
-import dev.rikka.shizuku.Shizuku
-import dev.rikka.shizuku.ShizukuBinderWrapper
+import rikka.shizuku.Shizuku
+import rikka.shizuku.ShizukuBinderWrapper
 
 object IInputManagerBinderHelper {
 
@@ -51,7 +51,7 @@ object IInputManagerBinderHelper {
             Log.i(TAG, "Binder alive: ${binder.isBinderAlive}")
 
             val wrappedBinder = ShizukuBinderWrapper(binder)
-            Log.i(TAG, "Wrapped binder obtained: ${wrappedBinder.javaClass.name}")
+            Log.i(TAG, "Wrapped binder obtained: ${wrappedBinder?.java?.name}")
 
             BinderAcquisitionResult(
                 success = true,
@@ -118,8 +118,7 @@ object IInputManagerBinderHelper {
 
             Log.i(TAG, "Invoking injectInputEvent via wrapped binder...")
             Log.i(TAG, "Event class: ${event.javaClass.name}")
-            Log.i(TAG, "Event: action=0x${Integer.toHexString(event.actionMasked)} " +
-                    "downTime=${event.downTime} eventTime=${event.eventTime}")
+            Log.i(TAG, "Event: action=0x${Integer.toHexString(event.action)} eventTime=${event.eventTime}")
 
             val invokeTs = System.nanoTime()
             val result = method.invoke(wrappedBinder, event, mode)

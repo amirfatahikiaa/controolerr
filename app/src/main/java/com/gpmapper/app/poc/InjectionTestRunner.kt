@@ -5,7 +5,7 @@ import android.os.Looper
 import android.os.SystemClock
 import android.util.Log
 import android.view.MotionEvent
-import dev.rikka.shizuku.Shizuku
+import rikka.shizuku.Shizuku
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.atomic.AtomicBoolean
 
