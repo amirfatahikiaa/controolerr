@@ -3,96 +3,139 @@ package com.gpmapper.app.poc;
 import android.util.Log;
 import android.view.MotionEvent;
 import java.lang.reflect.Method;
+import java.lang.reflect.Modifier;
 
 public class MotionEventFactory {
 
     private static final String TAG = "MEventFactory";
     private static Method sObtainMethod;
     private static String sResolvedSignature;
+    private static String sDiagnostics = "Not initialized";
+
+    public static String getDiagnostics() { return sDiagnostics; }
 
     static {
+        StringBuilder diag = new StringBuilder();
         try {
-            Method[] methods = MotionEvent.class.getDeclaredMethods();
-            Log.i(TAG, "MotionEvent has " + methods.length + " declared methods");
+            // getDeclaredMethods() can be blocked by hidden API policy on API 28+.
+            // getMethods() returns all public methods and is less restricted.
+            Method[] declared = MotionEvent.class.getDeclaredMethods();
+            Method[] pub = MotionEvent.class.getMethods();
 
-            for (Method m : methods) {
-                if (!"obtain".equals(m.getName())) continue;
-                if (!java.lang.reflect.Modifier.isStatic(m.getModifiers())) continue;
+            diag.append("getDeclaredMethods: ").append(declared.length).append("\n");
+            diag.append("getMethods: ").append(pub.length).append("\n\n");
 
-                Class<?>[] p = m.getParameterTypes();
-                StringBuilder sb = new StringBuilder("obtain(");
-                for (int i = 0; i < p.length; i++) {
-                    if (i > 0) sb.append(", ");
-                    sb.append(p[i].getName());
-                }
-                sb.append(") [").append(p.length).append(" params]");
-                Log.i(TAG, "  Found overload: " + sb.toString());
-
-                // Match the 10-param overload:
-                // obtain(long, long, int, int, PointerProperties[], PointerCoords[], int, int, int, int)
-                if (p.length == 10
-                        && p[0] == long.class
-                        && p[1] == long.class
-                        && p[2] == int.class
-                        && p[3] == int.class
-                        && p[4] == MotionEvent.PointerProperties[].class
-                        && p[5] == MotionEvent.PointerCoords[].class
-                        && p[6] == int.class
-                        && p[7] == int.class
-                        && p[8] == int.class
-                        && p[9] == int.class) {
-                    sObtainMethod = m;
-                    sObtainMethod.setAccessible(true);
-                    sResolvedSignature = sb.toString();
-                    Log.i(TAG, "MATCHED 10-param overload: " + sResolvedSignature);
-                }
-
-                // Also try to match the 14-param overload:
-                // obtain(long, long, int, float, float, float, float, int, float, float, int, int, int, int)
-                if (sObtainMethod == null && p.length == 14
-                        && p[0] == long.class
-                        && p[1] == long.class
-                        && p[2] == int.class
-                        && p[3] == float.class
-                        && p[4] == float.class
-                        && p[5] == float.class
-                        && p[6] == float.class
-                        && p[7] == int.class
-                        && p[8] == float.class
-                        && p[9] == float.class
-                        && p[10] == int.class
-                        && p[11] == int.class
-                        && p[12] == int.class
-                        && p[13] == int.class) {
-                    sObtainMethod = m;
-                    sObtainMethod.setAccessible(true);
-                    sResolvedSignature = sb.toString();
-                    Log.i(TAG, "MATCHED 14-param overload: " + sResolvedSignature);
+            // Log ALL obtain overloads from getDeclaredMethods
+            diag.append("--- getDeclaredMethods obtain ---\n");
+            int obtainCount = 0;
+            for (Method m : declared) {
+                if ("obtain".equals(m.getName()) && Modifier.isStatic(m.getModifiers())) {
+                    obtainCount++;
+                    diag.append(sig(m)).append("\n");
+                    Log.i(TAG, "getDeclaredMethods: " + sig(m));
                 }
             }
+            diag.append("count: ").append(obtainCount).append("\n\n");
 
+            // Log ALL obtain overloads from getMethods
+            diag.append("--- getMethods obtain ---\n");
+            obtainCount = 0;
+            for (Method m : pub) {
+                if ("obtain".equals(m.getName()) && Modifier.isStatic(m.getModifiers())) {
+                    obtainCount++;
+                    diag.append(sig(m)).append("\n");
+                    Log.i(TAG, "getMethods: " + sig(m));
+                }
+            }
+            diag.append("count: ").append(obtainCount).append("\n\n");
+
+            // Try to match using getMethods first (public, less restricted)
+            sObtainMethod = matchObtain(pub);
             if (sObtainMethod == null) {
-                Log.e(TAG, "NO matching MotionEvent.obtain overload found!");
+                sObtainMethod = matchObtain(declared);
+            }
+
+            if (sObtainMethod != null) {
+                sResolvedSignature = sig(sObtainMethod);
+                diag.append("MATCHED: ").append(sResolvedSignature).append("\n");
+                Log.i(TAG, "MATCHED: " + sResolvedSignature);
+            } else {
+                diag.append("NO MATCH FOUND\n");
+                diag.append("\n--- All public methods on MotionEvent ---\n");
+                for (Method m : pub) {
+                    diag.append(Modifier.toString(m.getModifiers()))
+                        .append(" ").append(m.getReturnType().getSimpleName())
+                        .append(" ").append(m.getName()).append("(");
+                    Class<?>[] p = m.getParameterTypes();
+                    for (int i = 0; i < p.length; i++) {
+                        if (i > 0) diag.append(", ");
+                        diag.append(p[i].getSimpleName());
+                    }
+                    diag.append(")\n");
+                }
+                Log.e(TAG, "NO matching obtain overload found!");
             }
         } catch (Exception e) {
-            Log.e(TAG, "Failed to enumerate MotionEvent.obtain overloads", e);
+            diag.append("EXCEPTION: ").append(e).append("\n");
+            Log.e(TAG, "Failed to enumerate methods", e);
         }
+        sDiagnostics = diag.toString();
+    }
+
+    private static Method matchObtain(Method[] methods) {
+        for (Method m : methods) {
+            if (!"obtain".equals(m.getName())) continue;
+            if (!Modifier.isStatic(m.getModifiers())) continue;
+            Class<?>[] p = m.getParameterTypes();
+
+            // 10-param: (long, long, int, int, PointerProperties[], PointerCoords[], int, int, int, int)
+            if (p.length == 10
+                    && p[0] == long.class && p[1] == long.class
+                    && p[2] == int.class && p[3] == int.class
+                    && p[4] == MotionEvent.PointerProperties[].class
+                    && p[5] == MotionEvent.PointerCoords[].class
+                    && p[6] == int.class && p[7] == int.class
+                    && p[8] == int.class && p[9] == int.class) {
+                m.setAccessible(true);
+                return m;
+            }
+
+            // 14-param: (long, long, int, float, float, float, float, int, float, float, int, int, int, int)
+            if (p.length == 14
+                    && p[0] == long.class && p[1] == long.class
+                    && p[2] == int.class && p[3] == float.class
+                    && p[4] == float.class && p[5] == float.class
+                    && p[6] == float.class && p[7] == int.class
+                    && p[8] == float.class && p[9] == float.class
+                    && p[10] == int.class && p[11] == int.class
+                    && p[12] == int.class && p[13] == int.class) {
+                m.setAccessible(true);
+                return m;
+            }
+        }
+        return null;
+    }
+
+    private static String sig(Method m) {
+        StringBuilder sb = new StringBuilder(m.getName()).append("(");
+        Class<?>[] p = m.getParameterTypes();
+        for (int i = 0; i < p.length; i++) {
+            if (i > 0) sb.append(", ");
+            sb.append(p[i].getName());
+        }
+        sb.append(") [").append(p.length).append(" params]");
+        return sb.toString();
     }
 
     public static MotionEvent create(
-            int action,
-            float x,
-            float y,
-            long downTime,
-            long eventTime,
-            int pointerId,
-            float pressure,
-            float size,
+            int action, float x, float y,
+            long downTime, long eventTime,
+            int pointerId, float pressure, float size,
             int source
     ) throws Exception {
         if (sObtainMethod == null) {
             throw new IllegalStateException(
-                    "MotionEvent.obtain not found. Resolved: " + sResolvedSignature);
+                    "MotionEvent.obtain not found.\n" + sDiagnostics);
         }
 
         Class<?>[] paramTypes = sObtainMethod.getParameterTypes();
@@ -108,20 +151,12 @@ public class MotionEventFactory {
             pc.pressure = pressure;
             pc.size = size;
 
-            MotionEvent.PointerProperties[] ppArr = new MotionEvent.PointerProperties[]{pp};
-            MotionEvent.PointerCoords[] pcArr = new MotionEvent.PointerCoords[]{pc};
-
-            Log.i(TAG, "Invoking 10-param: downTime=" + downTime + " eventTime=" + eventTime
-                    + " action=" + action + " pointerCount=1 source=" + source);
-
             return (MotionEvent) sObtainMethod.invoke(null,
                     downTime, eventTime, action, 1,
-                    ppArr, pcArr,
+                    new MotionEvent.PointerProperties[]{pp},
+                    new MotionEvent.PointerCoords[]{pc},
                     0, source, 0, 0);
         } else if (paramTypes.length == 14) {
-            Log.i(TAG, "Invoking 14-param: downTime=" + downTime + " eventTime=" + eventTime
-                    + " action=" + action + " x=" + x + " y=" + y + " source=" + source);
-
             return (MotionEvent) sObtainMethod.invoke(null,
                     downTime, eventTime, action,
                     x, y, pressure, size,
@@ -129,7 +164,7 @@ public class MotionEventFactory {
                     0, 0, source, 0);
         } else {
             throw new IllegalStateException(
-                    "Unexpected obtain param count: " + paramTypes.length);
+                    "Unexpected param count " + paramTypes.length + "\n" + sDiagnostics);
         }
     }
 }
