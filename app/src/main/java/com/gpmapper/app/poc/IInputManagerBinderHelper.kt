@@ -206,30 +206,6 @@ object IInputManagerBinderHelper {
         }
     }
 
-    private val obtainMethod: java.lang.reflect.Method? by lazy {
-        try {
-            val methods = android.view.MotionEvent::class.java.declaredMethods
-            methods.firstOrNull { m ->
-                m.name == "obtain" &&
-                java.lang.reflect.Modifier.isStatic(m.modifiers) &&
-                m.parameterTypes.size == 10 &&
-                m.parameterTypes[4].isArray &&
-                m.parameterTypes[4].componentType?.name?.contains("PointerProperties") == true
-            }?.also { it.isAccessible = true }
-                ?: methods.firstOrNull { m ->
-                    m.name == "obtain" &&
-                    java.lang.reflect.Modifier.isStatic(m.modifiers) &&
-                    m.parameterTypes.size == 14
-                }?.also {
-                    it.isAccessible = true
-                    Log.w(TAG, "Fell back to 14-param MotionEvent.obtain overload")
-                }
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to resolve MotionEvent.obtain overload", e)
-            null
-        }
-    }
-
     fun createMotionEvent(
         action: Int,
         x: Float,
@@ -241,35 +217,7 @@ object IInputManagerBinderHelper {
         size: Float = 1.0f,
         source: Int = 0x00001002 // SOURCE_TOUCHSCREEN
     ): android.view.MotionEvent {
-        val method = obtainMethod
-            ?: throw IllegalStateException("MotionEvent.obtain method not resolved — obtainMethod is null")
-
-        val paramCount = method.parameterTypes.size
-        if (paramCount == 10) {
-            val pp = android.view.MotionEvent.PointerProperties()
-            pp.id = pointerId
-            pp.toolType = android.view.MotionEvent.TOOL_TYPE_FINGER
-            val pc = android.view.MotionEvent.PointerCoords()
-            pc.x = x
-            pc.y = y
-            pc.pressure = pressure
-            pc.size = size
-            val ppArray = arrayOf(pp)
-            val pcArray = arrayOf(pc)
-            @Suppress("UNCHECKED_CAST")
-            return method.invoke(
-                null, downTime, eventTime, action, 1,
-                ppArray, pcArray,
-                0, source, 0, 0
-            ) as android.view.MotionEvent
-        } else {
-            @Suppress("UNCHECKED_CAST")
-            return method.invoke(
-                null, downTime, eventTime, action,
-                x, y, pressure, size,
-                0, 1.0f, 1.0f, 0, 0, source, 0
-            ) as android.view.MotionEvent
-        }
+        return MotionEventFactory.create(action, x, y, downTime, eventTime, pointerId, pressure, size, source)
     }
 
     fun createTapMotionEvents(
