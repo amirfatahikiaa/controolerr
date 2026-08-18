@@ -1,6 +1,7 @@
 package com.gpmapper.app
 
 import android.os.Bundle
+import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -26,6 +27,7 @@ import com.gpmapper.app.input.DiagnosticTestRunner
 import com.gpmapper.app.input.InjectionBackend
 import com.gpmapper.app.input.ShizukuDaemonBackend
 import com.gpmapper.app.poc.PoCActivity
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
@@ -58,17 +60,20 @@ fun GPMapperUI() {
     var isMappingActive by remember { mutableStateOf(false) }
     var isOverlayActive by remember { mutableStateOf(false) }
     var currentProfile by remember { mutableStateOf("FC Mobile Default") }
-    var shizukuRunning by remember { mutableStateOf(false) }
-    var shizukuAuthorized by remember { mutableStateOf(false) }
     var showDiagnostics by remember { mutableStateOf(false) }
     var diagnosticReport by remember { mutableStateOf<DiagnosticTestRunner.FullDiagnosticReport?>(null) }
     var isRunningDiagnostics by remember { mutableStateOf(false) }
     var latencyStats by remember { mutableStateOf<MappingService.LatencyTracker.Stats?>(null) }
     var backendDiagnostics by remember { mutableStateOf<InjectionBackend.BackendDiagnostics?>(null) }
 
+    val shizukuState by app.shizukuState.collectAsState()
+    val shizukuRunning = shizukuState is GPMapperApp.ShizukuState.Active ||
+            shizukuState is GPMapperApp.ShizukuState.RunningNotAuthorized
+    val shizukuAuthorized = shizukuState is GPMapperApp.ShizukuState.Active
+
     LaunchedEffect(Unit) {
-        shizukuRunning = app.checkShizukuRunning()
-        shizukuAuthorized = GPMapperApp.shizukuAuthorized
+        Log.i("GPMapperUI", "Initial Shizuku state: $shizukuState")
+        app.refreshShizukuState()
     }
 
     Scaffold(
@@ -115,15 +120,31 @@ fun GPMapperUI() {
                     StatusRow("Controller", isMappingActive)
                     StatusRow("Overlay", isOverlayActive)
 
-                    if (!shizukuRunning) {
+                    Spacer(modifier = Modifier.height(4.dp))
+                    val stateLabel = when (shizukuState) {
+                        is GPMapperApp.ShizukuState.Initializing -> "Checking..."
+                        is GPMapperApp.ShizukuState.NotRunning -> (shizukuState as GPMapperApp.ShizukuState.NotRunning).msg
+                        is GPMapperApp.ShizukuState.RunningNotAuthorized -> (shizukuState as GPMapperApp.ShizukuState.RunningNotAuthorized).msg
+                        is GPMapperApp.ShizukuState.Active -> (shizukuState as GPMapperApp.ShizukuState.Active).msg
+                    }
+                    Text("State: $stateLabel", fontSize = 11.sp, color = Color(0xFF757575))
+
+                    if (!shizukuAuthorized) {
                         Spacer(modifier = Modifier.height(8.dp))
                         Button(
-                            onClick = { app.requestShizukuPermission(1001) },
+                            onClick = {
+                                Log.i("GPMapperUI", "Request Shizuku Permission clicked, current state: $shizukuState")
+                                app.requestShizukuPermission(1001)
+                            },
                             modifier = Modifier.fillMaxWidth(),
                             colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFF9800)),
                             shape = RoundedCornerShape(8.dp)
                         ) {
-                            Text("Request Shizuku Permission", fontSize = 12.sp)
+                            Text(
+                                if (!shizukuRunning) "Request Shizuku Permission"
+                                else "Grant Shizuku Permission",
+                                fontSize = 12.sp
+                            )
                         }
                     }
                 }
