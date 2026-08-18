@@ -7,6 +7,7 @@ import android.view.MotionEvent;
 public class MotionEventFactory {
 
     private static final String TAG = "MEventFactory";
+    public static String lastResult = "No attempt yet";
 
     public static MotionEvent create(
             int action, float x, float y,
@@ -24,11 +25,13 @@ public class MotionEventFactory {
                     0
             );
             event.setSource(InputDevice.SOURCE_TOUCHSCREEN);
-            Log.i(TAG, "direct MotionEvent.obtain(6-param) SUCCESS");
+            lastResult = "direct MotionEvent.obtain(6-param) SUCCESS";
+            Log.i(TAG, lastResult);
             return event;
         } catch (Exception e) {
-            Log.e(TAG, "direct MotionEvent.obtain FAILED: " + e, e);
-            throw new RuntimeException("MotionEvent.obtain failed: " + e.getMessage(), e);
+            lastResult = "direct MotionEvent.obtain FAILED: " + e;
+            Log.e(TAG, lastResult, e);
+            throw new RuntimeException(lastResult, e);
         }
     }
 }

@@ -288,8 +288,7 @@ class PoCActivity : Activity() {
 
         appendLog("=== Starting Injection Tests ===")
         appendLog("Shizuku: bound=$shizukuBound authorized=$shizukuAuthorized")
-        appendLog("\n--- MotionEventFactory Diagnostics ---")
-        appendLog(MotionEventFactory.getDiagnostics())
+        appendLog("MotionEventFactory: ${MotionEventFactory.lastResult}")
         try {
             testRunner.runAllTests()
         } catch (e: Exception) {
