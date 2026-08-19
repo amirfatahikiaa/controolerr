@@ -6,7 +6,6 @@ import android.view.MotionEvent;
 
 import java.lang.reflect.Array;
 import java.lang.reflect.Constructor;
-import java.lang.reflect.Method;
 
 public class MotionEventFactory {
 
@@ -56,40 +55,58 @@ public class MotionEventFactory {
             ppCtor.setAccessible(true);
             pcCtor.setAccessible(true);
 
+            java.lang.reflect.Field idField = ppClass.getField("id");
+            java.lang.reflect.Field toolTypeField = ppClass.getField("toolType");
+
+            java.lang.reflect.Field xField = pcClass.getField("x");
+            java.lang.reflect.Field yField = pcClass.getField("y");
+            java.lang.reflect.Field pressureField = pcClass.getField("pressure");
+            java.lang.reflect.Field sizeField = pcClass.getField("size");
+            java.lang.reflect.Field touchMajorField = pcClass.getField("touchMajor");
+            java.lang.reflect.Field touchMinorField = pcClass.getField("touchMinor");
+            java.lang.reflect.Field toolMajorField = pcClass.getField("toolMajor");
+            java.lang.reflect.Field toolMinorField = pcClass.getField("toolMinor");
+            java.lang.reflect.Field orientationField = pcClass.getField("orientation");
+
             Class<?> ppArrayClass = Array.newInstance(ppClass, 0).getClass();
             Class<?> pcArrayClass = Array.newInstance(pcClass, 0).getClass();
             Object ppArray = Array.newInstance(ppClass, pointerCount);
             Object pcArray = Array.newInstance(pcClass, pointerCount);
 
-            Method idSetter = ppClass.getMethod("setId", int.class);
-            Method xSetter = pcClass.getMethod("setX", float.class);
-            Method ySetter = pcClass.getMethod("setY", float.class);
-            Method pSetter = pcClass.getMethod("setPressure", float.class);
-            Method sSetter = pcClass.getMethod("setSize", float.class);
-
             for (int i = 0; i < pointerCount; i++) {
                 Object pp = ppCtor.newInstance();
                 Object pc = pcCtor.newInstance();
 
-                idSetter.invoke(pp, i);
+                idField.setInt(pp, i);
+                toolTypeField.setInt(pp, 1);
 
                 if (i == pointerId || (pointerId == 0 && i == 0)) {
-                    xSetter.invoke(pc, x);
-                    ySetter.invoke(pc, y);
-                    pSetter.invoke(pc, pressure);
-                    sSetter.invoke(pc, size);
+                    xField.setFloat(pc, x);
+                    yField.setFloat(pc, y);
+                    pressureField.setFloat(pc, pressure);
+                    sizeField.setFloat(pc, size);
+                    touchMajorField.setFloat(pc, size * 20f);
+                    touchMinorField.setFloat(pc, size * 15f);
+                    toolMajorField.setFloat(pc, size * 20f);
+                    toolMinorField.setFloat(pc, size * 15f);
+                    orientationField.setFloat(pc, 0f);
                 } else {
-                    xSetter.invoke(pc, 0f);
-                    ySetter.invoke(pc, 0f);
-                    pSetter.invoke(pc, 0f);
-                    sSetter.invoke(pc, 0f);
+                    xField.setFloat(pc, 0f);
+                    yField.setFloat(pc, 0f);
+                    pressureField.setFloat(pc, 0f);
+                    sizeField.setFloat(pc, 0f);
+                    touchMajorField.setFloat(pc, 0f);
+                    touchMinorField.setFloat(pc, 0f);
+                    toolMajorField.setFloat(pc, 0f);
+                    toolMinorField.setFloat(pc, 0f);
+                    orientationField.setFloat(pc, 0f);
                 }
 
                 Array.set(ppArray, i, pp);
                 Array.set(pcArray, i, pc);
             }
 
-            Method obtainMethod = MotionEvent.class.getMethod(
+            java.lang.reflect.Method obtainMethod = MotionEvent.class.getMethod(
                     "obtain",
                     long.class, long.class, int.class, int.class,
                     ppArrayClass, pcArrayClass,
@@ -106,6 +123,7 @@ public class MotionEventFactory {
 
             lastResult = "SUCCESS_MULTI";
             Log.i(TAG, lastResult + " ptrCount=" + pointerCount + " action=0x" + Integer.toHexString(action));
+            Log.i(TAG, diagnoseEvent(event, "POST-CREATE-MULTI"));
             return event;
         } catch (Exception e) {
             lastResult = "FAILED_MULTI: " + e;
