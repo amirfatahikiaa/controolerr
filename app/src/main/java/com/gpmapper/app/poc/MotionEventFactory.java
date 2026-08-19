@@ -4,6 +4,7 @@ import android.util.Log;
 import android.view.InputDevice;
 import android.view.MotionEvent;
 
+import java.lang.reflect.Array;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Method;
 
@@ -55,51 +56,52 @@ public class MotionEventFactory {
             ppCtor.setAccessible(true);
             pcCtor.setAccessible(true);
 
-            Method ppSetMethod = ppClass.getMethod("setTo", ppClass);
-            Method pcSetMethod = pcClass.getMethod("setTo", pcClass);
+            Class<?> ppArrayClass = Array.newInstance(ppClass, 0).getClass();
+            Class<?> pcArrayClass = Array.newInstance(pcClass, 0).getClass();
+            Object ppArray = Array.newInstance(ppClass, pointerCount);
+            Object pcArray = Array.newInstance(pcClass, pointerCount);
 
-            Object[] ppArray = new Object[pointerCount];
-            Object[] pcArray = new Object[pointerCount];
+            Method idSetter = ppClass.getMethod("setId", int.class);
+            Method xSetter = pcClass.getMethod("setX", float.class);
+            Method ySetter = pcClass.getMethod("setY", float.class);
+            Method pSetter = pcClass.getMethod("setPressure", float.class);
+            Method sSetter = pcClass.getMethod("setSize", float.class);
+
             for (int i = 0; i < pointerCount; i++) {
-                ppArray[i] = ppCtor.newInstance();
-                pcArray[i] = pcCtor.newInstance();
+                Object pp = ppCtor.newInstance();
+                Object pc = pcCtor.newInstance();
 
-                Method idSetter = ppClass.getMethod("setId", int.class);
-                idSetter.invoke(ppArray[i], i);
-
-                Method xSetter = pcClass.getMethod("setX", float.class);
-                Method ySetter = pcClass.getMethod("setY", float.class);
-                Method pSetter = pcClass.getMethod("setPressure", float.class);
-                Method sSetter = pcClass.getMethod("setSize", float.class);
+                idSetter.invoke(pp, i);
 
                 if (i == pointerId || (pointerId == 0 && i == 0)) {
-                    xSetter.invoke(pcArray[i], x);
-                    ySetter.invoke(pcArray[i], y);
-                    pSetter.invoke(pcArray[i], pressure);
-                    sSetter.invoke(pcArray[i], size);
+                    xSetter.invoke(pc, x);
+                    ySetter.invoke(pc, y);
+                    pSetter.invoke(pc, pressure);
+                    sSetter.invoke(pc, size);
                 } else {
-                    xSetter.invoke(pcArray[i], 0f);
-                    ySetter.invoke(pcArray[i], 0f);
-                    pSetter.invoke(pcArray[i], 0f);
-                    sSetter.invoke(pcArray[i], 0f);
+                    xSetter.invoke(pc, 0f);
+                    ySetter.invoke(pc, 0f);
+                    pSetter.invoke(pc, 0f);
+                    sSetter.invoke(pc, 0f);
                 }
+
+                Array.set(ppArray, i, pp);
+                Array.set(pcArray, i, pc);
             }
 
-            MotionEvent event = MotionEvent.obtain(
-                    downTime,
-                    eventTime,
-                    action,
-                    pointerCount,
-                    ppArray,
-                    pcArray,
-                    0,
-                    0,
-                    1.0f,
-                    1.0f,
-                    0,
-                    0,
-                    source,
-                    0
+            Method obtainMethod = MotionEvent.class.getMethod(
+                    "obtain",
+                    long.class, long.class, int.class, int.class,
+                    ppArrayClass, pcArrayClass,
+                    int.class, int.class, float.class, float.class,
+                    int.class, int.class, int.class, int.class
+            );
+
+            MotionEvent event = (MotionEvent) obtainMethod.invoke(null,
+                    downTime, eventTime, action, pointerCount,
+                    ppArray, pcArray,
+                    0, 0, 1.0f, 1.0f,
+                    0, 0, source, 0
             );
 
             lastResult = "SUCCESS_MULTI";
